@@ -1,0 +1,55 @@
+{
+  "name": "@jk2908/mdsrc",
+  "version": "0.1.0",
+  "type": "module",
+  "author": "Jerome Kenway",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jk2908/mdsrc.git"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "bunchee"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.8.3",
+    "bunchee": "^5.3.2",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2"
+  },
+  "peerDependencies": {
+    "vite": "^4.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./vite-plugin-mdsrc": {
+      "types": "./dist/vite-plugin-mdsrc/index.d.ts",
+      "default": "./dist/vite-plugin-mdsrc/index.js"
+    }
+  },
+  "bugs": {
+    "url": "https://github.com/jk2908/mdsrc/issues"
+  },
+  "description": "A Vite plugin for managing markdown content with type safety",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "homepage": "https://github.com/jk2908/mdsrc#readme",
+  "keywords": [
+    "markdown",
+    "vite-plugin",
+    "typescript",
+    "content-management",
+    "frontmatter"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@types/bun": "^1.2.18",
+    "@types/node": "^24.0.1"
+  }
+}

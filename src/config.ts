@@ -1,0 +1,3 @@
+export const NAME = 'mdsrc'
+export const PKG_NAME = `@jk2908/${NAME}`
+export const GENERATED_DIR = `.${NAME}`
