@@ -51,7 +51,7 @@ export async function create(dir: string, ctx: BuildContext) {
 			return []
 		}
 
-		return await Promise.all(
+		return Promise.all(
 			files.map(async (file: string) => {
 				const { metadata, body } = parse(await fs.readFile(path.join(dir, file), 'utf-8'))
 
