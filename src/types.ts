@@ -1,4 +1,4 @@
-import type { LogLevel, Logger } from './logger'
+import type { LogLevel, Logger } from './logger.js'
 
 export type PluginConfig = {
 	logger?: {
@@ -8,6 +8,8 @@ export type PluginConfig = {
 
 export type BuildContext = {
 	logger: InstanceType<typeof Logger>
+	outDir?: string
+	names?: string[]
 }
 
 export type SchemaEntry = {

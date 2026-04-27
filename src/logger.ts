@@ -1,4 +1,4 @@
-import { NAME } from './config'
+import { NAME } from './config.js'
 
 const LEVELS = {
 	debug: 0,
@@ -25,13 +25,52 @@ type LogEntry = {
 
 /**
  * Log messages with different severity levels
- * @param level - the severity level of the logger
  */
 export class Logger {
-	#level: LogLevel = 'info'
+	static #defaultLevel: LogLevel = 'info'
 
-	constructor(level: LogLevel = 'info') {
+	#level?: LogLevel
+
+	constructor(level?: LogLevel) {
 		this.#level = level
+	}
+
+	static set defaultLevel(level: LogLevel) {
+		Logger.#defaultLevel = level
+	}
+
+	static get defaultLevel() {
+		return Logger.#defaultLevel
+	}
+
+	/**
+	 * Convert a value to an Error instance
+	 */
+	static toError(err: unknown) {
+		return err instanceof Error ? err : new Error(String(err), { cause: err })
+	}
+
+	/**
+	 * Stringify the error for logging
+	 */
+	static print(err: unknown) {
+		if (err instanceof Error) {
+			return err.message + (err.stack ? `\n${err.stack}` : '')
+		}
+
+		// for plain objects, attempt to stringify with indentation
+		// for readability
+		if (typeof err === 'object' && err !== null) {
+			try {
+				return JSON.stringify(err, null, 2)
+			} catch {
+				// if stringify fails (e.g. circular reference), fall back
+				// to basic string conversion
+				return String(err)
+			}
+		}
+
+		return String(err)
 	}
 
 	set level(level: LogLevel) {
@@ -39,11 +78,14 @@ export class Logger {
 	}
 
 	get level() {
-		return this.#level
+		return this.#level ?? Logger.#defaultLevel
 	}
 
+	/**
+	 * Log a message with a specific level
+	 */
 	log(level: LogLevel, message: string, error?: Error) {
-		if (LEVELS[level] < LEVELS[this.#level]) return
+		if (LEVELS[level] < LEVELS[this.level]) return
 
 		const entry: LogEntry = {
 			ts: Date.now(),
@@ -52,50 +94,61 @@ export class Logger {
 		}
 
 		if (level === 'error' || level === 'fatal') {
-			entry.error = error ? new Error(message, { cause: error }) : new Error(message)
+			entry.error = error ? Logger.toError(error) : new Error(message)
 		}
 
-		console.log(
-			`[${NAME}] [${entry.ts}] [${level.toUpperCase()}] ${message}`,
-			error ? `\n${error.stack}` : '',
-		)
+		const line = `[${NAME}] [${entry.ts}] [${level.toUpperCase()}] ${message}`
+		const extra = entry.error ? `\n${Logger.print(entry.error)}` : ''
+
+		if (level === 'warn') {
+			console.warn(line, extra)
+			return
+		}
+
+		if (level === 'error' || level === 'fatal') {
+			console.error(line, extra)
+			return
+		}
+
+		console.log(line, extra)
 	}
 
-	debug(message: string) {
-		this.log('debug', message)
+	/**
+	 * Log a debug message
+	 */
+	debug(...messages: string[]) {
+		this.log('debug', messages.join(' '))
 	}
 
-	info(message: string) {
-		this.log('info', message)
+	/**
+	 * Log an info message
+	 */
+	info(...messages: string[]) {
+		this.log('info', messages.join(' '))
 	}
 
-	warn(message: string) {
-		this.log('warn', message)
+	/**
+	 * Log a warning message
+	 */
+	warn(...messages: string[]) {
+		this.log('warn', messages.join(' '))
 	}
 
+	/**
+	 * Log an error message
+	 */
 	error(message: string, error?: unknown) {
-		this.log('error', message, Logger.toError(error))
+		this.log('error', message, error === undefined ? undefined : Logger.toError(error))
 	}
 
+	/**
+	 * Log a fatal error message
+	 */
 	fatal(message: string, error?: unknown) {
-		this.log('fatal', message, Logger.toError(error))
-	}
-
-	static toError(err: unknown) {
-		return err instanceof Error ? err : new Error(String(err), { cause: err })
-	}
-
-	static print(err: unknown) {
-		if (err instanceof Error) {
-			return err.message + (err.stack ? `\n${err.stack}` : '')
-		}
-
-		if (typeof err === 'object' && err !== null) {
-			return JSON.stringify(err, null, 2)
-		}
-
-		return String(err)
+		this.log('fatal', message, error === undefined ? undefined : Logger.toError(error))
 	}
 }
 
-export const logger = new Logger(Bun.env.PROD ? 'error' : 'debug')
+export const logger = new Logger(
+	process.env.NODE_ENV === 'production' ? 'error' : 'debug',
+)
