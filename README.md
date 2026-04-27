@@ -31,7 +31,7 @@ export default defineConfig({
 
 The plugin reads markdown content, validates frontmatter against your schema, and generates typed modules during build and watch. Collection config currently uses `name`, `dir`, and `schema`.
 
-If you configure a collection with `name: 'post'`, the generated module exports `allPosts` from the `.mdsrc` folder in the project root.
+If you configure a collection with `name: 'post'`, the generated module exports `allPosts` from the package root.
 
 ```ts
 import { allPosts } from '.mdsrc'
