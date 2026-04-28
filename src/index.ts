@@ -19,6 +19,10 @@ import { capitalise, debounce, pluralise } from './utils.js'
 
 const fileCache = new Map<string, string>()
 
+function toModuleName(name: string) {
+	return name.toLowerCase()
+}
+
 /**
  * Split a markdown file into frontmatter data and the body content
  * keep the format small so the parser stays easy to trust
@@ -354,6 +358,14 @@ async function build(src: Collection[], buildContext: BuildContext) {
 				`	
 					import type { ${names.map(name => capitalise(name)).join(', ')} } from './types.js'
 
+					${names
+						.map(
+							name => `
+								export const all${capitalise(pluralise(name, 2))}: ${capitalise(name)}[]
+							`,
+						)
+						.join('\n\n')}
+
 					declare module '${PKG_NAME}' {
 						${names
 							.map(
@@ -371,10 +383,11 @@ async function build(src: Collection[], buildContext: BuildContext) {
 		// empty collections still export a stable array shape
 		for (const name of names) {
 			const collection = collections[name]?.items
+			const fileName = toModuleName(name)
 
 			promises.push(
 				maybeWrite(
-					path.join(outDir, `${name}.js`),
+					path.join(outDir, `${fileName}.js`),
 					`export const all${capitalise(pluralise(name, 2))} = ${collection?.length ? JSON.stringify(collection) : '[]'}`.trim(),
 				),
 			)
@@ -385,7 +398,7 @@ async function build(src: Collection[], buildContext: BuildContext) {
 		promises.push(
 			maybeWrite(
 				path.join(outDir, 'index.js'),
-				names.map(name => `export * from './${name}.js'`).join('\n'),
+				names.map(name => `export * from './${toModuleName(name)}.js'`).join('\n'),
 			),
 		)
 
@@ -470,9 +483,9 @@ export default function plugin(src: Collection[]): Plugin {
 					try {
 						const changed = await build(src, buildContext)
 
-							if (changed) logger.info(`[watch]: content rebuilt (${rebuildReason})`)
+						if (changed) logger.info(`[watch]: content rebuilt (${rebuildReason})`)
 					} catch (err) {
-							logger.error('[watch] content rebuild failed', err)
+						logger.error('[watch] content rebuild failed', err)
 					}
 				} while (rebuildQueued)
 
@@ -492,6 +505,29 @@ export default function plugin(src: Collection[]): Plugin {
 	return {
 		name: 'mdsrc',
 		enforce: 'pre',
+		config(viteConfig) {
+			viteConfig.optimizeDeps ??= {}
+			viteConfig.optimizeDeps.exclude = [
+				...new Set([...(viteConfig.optimizeDeps.exclude ?? []), PKG_NAME]),
+			]
+
+			viteConfig.resolve ??= {}
+
+			if (Array.isArray(viteConfig.resolve.alias)) {
+				viteConfig.resolve.alias = [
+					...viteConfig.resolve.alias,
+					{
+						find: PKG_NAME,
+						replacement: path.join(outDir, 'index.js'),
+					},
+				]
+			} else {
+				viteConfig.resolve.alias = {
+					...viteConfig.resolve.alias,
+					[PKG_NAME]: path.join(outDir, 'index.js'),
+				}
+			}
+		},
 		async buildStart() {
 			await build(src, buildContext)
 		},
@@ -516,9 +552,12 @@ export default function plugin(src: Collection[]): Plugin {
 				// allow collection subpath imports once the build knows their names
 				// leave unknown subpaths unresolved
 				const subpath = id.slice(PKG_NAME.length + 1)
+				const match = buildContext.names.find(
+					name => name === subpath || toModuleName(name) === subpath,
+				)
 
-				if (buildContext.names.some(name => name === subpath)) {
-					return path.join(outDir, `${subpath}.js`)
+				if (match) {
+					return path.join(outDir, `${toModuleName(match)}.js`)
 				}
 			}
 

@@ -1,6 +1,6 @@
 {
   "name": "@jk2908/mdsrc",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "author": "Jerome Kenway",
   "repository": {
@@ -39,7 +39,8 @@
   "description": "A Vite plugin for managing markdown content with type safety",
   "files": [
     "dist/*.js",
-    "dist/*.d.ts"
+    "dist/*.d.ts",
+    "CHANGELOG.md"
   ],
   "homepage": "https://github.com/jk2908/mdsrc#readme",
   "keywords": [
