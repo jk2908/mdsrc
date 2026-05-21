@@ -1,19 +1,24 @@
 {
   "compilerOptions": {
-  "target": "ESNext",
-  "lib": ["ESNext"],
-  "module": "NodeNext",
-  "moduleResolution": "NodeNext",
-  "strict": true,
-  "skipLibCheck": true,
-  "types": ["node"],
-    "declaration": true,
-  "allowSyntheticDefaultImports": true,
+    "target": "ESNext",
+    "lib": [
+      "ESNext"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [
+      "node",
+      "bun"
+    ],
+    "allowImportingTsExtensions": true,
+    "allowSyntheticDefaultImports": true,
     "noUnusedLocals": true,
-  "rootDir": "src",
-    "outDir": "dist",
-    "sourceMap": true,
-  "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true
   },
-  "include": ["src"]
+  "include": [
+    "packages/*/src",
+    "tests"
+  ]
 }

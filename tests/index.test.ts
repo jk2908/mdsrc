@@ -1,3 +1,5 @@
+import type { MarkdownIt } from 'markdown-it-ts'
+
 import { afterEach, describe, expect, test } from 'bun:test'
 import fs from 'node:fs/promises'
 import os from 'node:os'
@@ -6,9 +8,9 @@ import { pathToFileURL } from 'node:url'
 
 import type { ViteDevServer } from 'vite'
 
-import type { Schema } from '../src/types.ts'
-import plugin, { create } from '../src/index.ts'
-import { Logger } from '../src/logger.ts'
+import type { Collection, PluginConfig, Schema } from '../packages/mdsrc/src/types.ts'
+import plugin, { create } from '../packages/mdsrc/src/index.ts'
+import { Logger } from '../packages/mdsrc/src/logger.ts'
 
 const originalCwd = process.cwd()
 const originalConsoleLog = console.log
@@ -25,6 +27,17 @@ const postSchemaWithOptionalFields = {
 	draft: { type: 'boolean', optional: true },
 	publishedAt: { type: 'date', optional: true },
 } satisfies Schema
+
+function paragraphClassPlugin(markdown: MarkdownIt, className: string) {
+	const renderParagraphOpen =
+		markdown.renderer.rules.paragraph_open ??
+		((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+
+	markdown.renderer.rules.paragraph_open = (tokens, idx, options, env, self) => {
+		tokens[idx]?.attrJoin('class', className)
+		return renderParagraphOpen(tokens, idx, options, env, self)
+	}
+}
 
 afterEach(async () => {
 	process.chdir(originalCwd)
@@ -51,10 +64,17 @@ async function useFixture(name: string) {
 	}
 }
 
-async function runBuild(workspaceDir: string, schema: Schema) {
+async function runBuildCollections(
+	workspaceDir: string,
+	collections: Collection[],
+	config: Omit<PluginConfig, 'collections'> = {},
+) {
 	process.chdir(workspaceDir)
 
-	const instance = plugin([{ name: 'post', dir: 'content', schema }])
+	const instance = plugin({
+		...config,
+		collections,
+	})
 	const buildStart = instance.buildStart as (() => Promise<void>) | undefined
 
 	if (!buildStart) {
@@ -70,6 +90,18 @@ async function runBuild(workspaceDir: string, schema: Schema) {
 	return { allPosts, generatedDir, instance, typesSource }
 }
 
+async function runBuild(
+	workspaceDir: string,
+	schema: Schema,
+	config: Omit<PluginConfig, 'collections'> = {},
+) {
+	return runBuildCollections(
+		workspaceDir,
+		[{ name: 'post', dir: 'content', schema }],
+		config,
+	)
+}
+
 async function readAllPosts(generatedDir: string) {
 	const { allPosts } = await import(
 		`${pathToFileURL(path.join(generatedDir, 'post.js')).href}?t=${Date.now()}-${Math.random()}`
@@ -78,10 +110,14 @@ async function readAllPosts(generatedDir: string) {
 	return allPosts
 }
 
-async function buildFixture(name: string, schema: Schema) {
+async function buildFixture(
+	name: string,
+	schema: Schema,
+	config: Omit<PluginConfig, 'collections'> = {},
+) {
 	const { workspaceDir } = await useFixture(name)
 	return {
-		...(await runBuild(workspaceDir, schema)),
+		...(await runBuild(workspaceDir, schema, config)),
 		workspaceDir,
 	}
 }
@@ -130,7 +166,8 @@ describe('mdsrc', () => {
 			title: 'hello world',
 			draft: 'true',
 			publishedAt: '2024-01-02',
-			body: 'this is the body',
+			html: '<p>this is the body</p>',
+			markdown: 'this is the body',
 			__mdsrc: {
 				filename: 'Hello World.md',
 				slug: 'hello-world',
@@ -147,13 +184,94 @@ describe('mdsrc', () => {
 		expect(typesSource).toContain('title: string')
 		expect(typesSource).toContain('draft?: boolean')
 		expect(typesSource).toContain('publishedAt?: string')
+		expect(typesSource).toContain('html: string')
+		expect(typesSource).toContain('markdown: string')
 		expect(allPosts).toHaveLength(1)
 		expect(allPosts[0]).toMatchObject({
 			title: 'hello world',
 			draft: true,
 			publishedAt: '2024-01-02T00:00:00.000Z',
-			body: 'this is the body',
+			html: '<p>this is the body</p>',
+			markdown: 'this is the body',
 		})
+	})
+
+	test('build renders markdown bodies to html with breaks and escapes inline html', async () => {
+		const { allPosts } = await buildFixture('rendering', postSchema)
+
+		expect(allPosts).toHaveLength(1)
+		expect(allPosts[0]?.markdown).toBe(
+			'first line\nsecond line\n\n<div class="callout">inline html</div>',
+		)
+		expect(allPosts[0]?.html).toBe(
+			'<p>first line<br>\nsecond line</p>\n<p>&lt;div class=&quot;callout&quot;&gt;inline html&lt;/div&gt;</p>',
+		)
+	})
+
+	test('markdown config overrides renderer defaults', async () => {
+		const { allPosts } = await buildFixture('rendering', postSchema, {
+			markdown: {
+				config: {
+					breaks: false,
+				},
+			},
+		})
+
+		expect(allPosts).toHaveLength(1)
+		expect(allPosts[0]?.html).toBe(
+			'<p>first line\nsecond line</p>\n<p>&lt;div class=&quot;callout&quot;&gt;inline html&lt;/div&gt;</p>',
+		)
+	})
+
+	test('markdown plugins apply to every collection', async () => {
+		const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'mdsrc-markdown-'))
+		const workspaceDir = path.join(tempRoot, 'workspace')
+		const generatedDir = path.join(workspaceDir, '.mdsrc')
+
+		tempRoots.add(tempRoot)
+		await fs.mkdir(path.join(workspaceDir, 'content-a'), { recursive: true })
+		await fs.mkdir(path.join(workspaceDir, 'content-b'), { recursive: true })
+		await fs.writeFile(
+			path.join(workspaceDir, 'content-a', 'Alpha.md'),
+			'---\ntitle: alpha\n---\n\nalpha body',
+		)
+		await fs.writeFile(
+			path.join(workspaceDir, 'content-b', 'Beta.md'),
+			'---\ntitle: beta\n---\n\nbeta body',
+		)
+
+		process.chdir(workspaceDir)
+
+		const collections = [
+			{ name: 'alpha', dir: 'content-a', schema: postSchema },
+			{ name: 'beta', dir: 'content-b', schema: postSchema },
+		] satisfies Collection[]
+		const config = {
+			markdown: {
+				plugins: [[paragraphClassPlugin, 'default-body']],
+			},
+			collections,
+		} satisfies PluginConfig
+		const instance = plugin(config)
+		const buildStart = instance.buildStart as (() => Promise<void>) | undefined
+
+		if (!buildStart) {
+			throw new Error('missing buildStart hook')
+		}
+
+		await buildStart()
+
+		const { allAlphas } = await import(
+			`${pathToFileURL(path.join(generatedDir, 'alpha.js')).href}?t=${Date.now()}-${Math.random()}`
+		)
+		const { allBetas } = await import(
+			`${pathToFileURL(path.join(generatedDir, 'beta.js')).href}?t=${Date.now()}-${Math.random()}`
+		)
+
+		expect(allAlphas[0]?.markdown).toBe('alpha body')
+		expect(allBetas[0]?.markdown).toBe('beta body')
+		expect(allAlphas[0]?.html).toBe('<p class="default-body">alpha body</p>')
+		expect(allBetas[0]?.html).toBe('<p class="default-body">beta body</p>')
 	})
 
 	test('build drops invalid entries but still emits schema-based types', async () => {
@@ -165,6 +283,8 @@ describe('mdsrc', () => {
 		expect(typesSource).toContain('title: string')
 		expect(typesSource).toContain('draft?: boolean')
 		expect(typesSource).toContain('publishedAt?: string')
+		expect(typesSource).toContain('html: string')
+		expect(typesSource).toContain('markdown: string')
 	})
 
 	test('build keeps every valid markdown file in the generated collection', async () => {
@@ -174,9 +294,15 @@ describe('mdsrc', () => {
 		)
 
 		expect(typesSource).toContain('title: string')
+		expect(typesSource).toContain('html: string')
+		expect(typesSource).toContain('markdown: string')
 		expect(posts.map(post => post.__mdsrc.slug)).toEqual(['hello-world', 'second-post'])
 		expect(posts.map(post => post.title)).toEqual(['hello world', 'second post'])
-		expect(posts.map(post => post.body)).toEqual(['first body', 'second body'])
+		expect(posts.map(post => post.markdown)).toEqual(['first body', 'second body'])
+		expect(posts.map(post => post.html)).toEqual([
+			'<p>first body</p>',
+			'<p>second body</p>',
+		])
 	})
 
 	test('resolveId returns generated files for the package root and known subpaths', async () => {
@@ -249,8 +375,12 @@ describe('mdsrc', () => {
 
 		process.chdir(workspaceDir)
 
-		const alpha = plugin([{ name: 'alpha', dir: 'content-a', schema: postSchema }])
-		const beta = plugin([{ name: 'beta', dir: 'content-b', schema: postSchema }])
+		const alpha = plugin({
+			collections: [{ name: 'alpha', dir: 'content-a', schema: postSchema }],
+		})
+		const beta = plugin({
+			collections: [{ name: 'beta', dir: 'content-b', schema: postSchema }],
+		})
 		const alphaBuildStart = alpha.buildStart as (() => Promise<void>) | undefined
 		const betaBuildStart = beta.buildStart as (() => Promise<void>) | undefined
 		const alphaConfigureServer = alpha.configureServer as
@@ -300,8 +430,6 @@ describe('mdsrc', () => {
 			return alphaSource.includes('alpha v2') && betaSource.includes('beta v2')
 		})
 
-		expect(
-			logs.filter(line => line.includes('[watch]: content rebuilt')),
-		).toHaveLength(2)
+		expect(logs.filter(line => line.includes('[watch]: content rebuilt'))).toHaveLength(2)
 	})
 })

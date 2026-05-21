@@ -4,11 +4,15 @@ import path from 'node:path'
 
 import type { Plugin, ViteDevServer } from 'vite'
 
+import MarkdownIt from 'markdown-it-ts'
+
 import type {
 	BuildContext,
 	Collection,
 	Entries,
 	Issue,
+	MarkdownItConfig,
+	PluginConfig,
 	Raw,
 	Result,
 	Schema,
@@ -18,6 +22,13 @@ import { Logger } from './logger.js'
 import { capitalise, debounce, pluralise } from './utils.js'
 
 const fileCache = new Map<string, string>()
+
+const DEFAULT_MARKDOWN_CONFIG = {
+	html: false,
+	breaks: true,
+} satisfies MarkdownItConfig
+
+export type { MarkdownItConfig } from './types.js'
 
 function toModuleName(name: string) {
 	return name.toLowerCase()
@@ -35,7 +46,7 @@ function parse(content: string) {
 	const match = content.match(regex)
 	const metadata: Entries = {}
 
-	if (!match) throw new Error('invalid frontmatter')
+	if (!match) throw new Error('Invalid frontmatter')
 
 	const [, frontmatter, body] = match
 
@@ -58,6 +69,20 @@ function parse(content: string) {
  */
 export async function create(dir: string, buildContext: BuildContext) {
 	const { logger } = buildContext
+	const markdown = new MarkdownIt({
+		...DEFAULT_MARKDOWN_CONFIG,
+		...buildContext.markdown?.config,
+	})
+
+	for (const plugin of buildContext.markdown?.plugins ?? []) {
+		if (typeof plugin === 'function' || 'default' in plugin) {
+			markdown.use(plugin)
+			continue
+		}
+
+		const [applyPlugin, ...params] = plugin
+		markdown.use(applyPlugin, ...params)
+	}
 
 	try {
 		// only pick up markdown files from this directory
@@ -78,15 +103,18 @@ export async function create(dir: string, buildContext: BuildContext) {
 
 				// keep the parsed fields, body, and mdsrc metadata together
 				// build the slug from the filename
-				const { metadata, body } = parse(await fs.readFile(filePath, 'utf-8'))
+				const parsed = parse(await fs.readFile(filePath, 'utf-8'))
+
+				const body = parsed.body ? parsed.body.trim() : ''
 
 				return {
-					...metadata,
+					...parsed.metadata,
 					__mdsrc: {
 						slug: path.basename(file, '.md').toLowerCase().replace(/\s+/g, '-'),
 						filename: file,
 					},
-					body: body.trim(),
+					html: body ? markdown.render(body).trim() : body,
+					markdown: body,
 				} satisfies Raw
 			}),
 		)
@@ -283,13 +311,14 @@ async function build(src: Collection[], buildContext: BuildContext) {
 			const validated = await Promise.all(
 				raw.map(async item => {
 					try {
-						const { body, __mdsrc, ...metadata } = item
+						const { html, markdown, __mdsrc, ...metadata } = item
 						const res = validate(metadata, collection.schema)
 
 						if (res.issues) throw new Error(JSON.stringify(res.issues, null, 2))
 
 						return {
-							body,
+							html,
+							markdown,
 							...res.value,
 							__mdsrc,
 						}
@@ -326,11 +355,12 @@ async function build(src: Collection[], buildContext: BuildContext) {
 				`
 					${names
 						// make one named type per collection so the dts mirrors the js surface.
-						// Body stays optional because an entry can still be mostly metadata
+						// html and markdown are always present on generated entries
 						.map(
 							name => `
 								export type ${capitalise(name)} = {
-									body?: string
+									html: string
+									markdown: string
 									${Object.entries(collections[name].schema)
 										// turn each schema field into a ts property line
 										// keep optional markers and date strings in step with validation
@@ -379,7 +409,7 @@ async function build(src: Collection[], buildContext: BuildContext) {
 			),
 		)
 
-		// serialise each validated collection as a plain module for vite to load
+		// serialise each validated collection as a plain module for Vite to load
 		// empty collections still export a stable array shape
 		for (const name of names) {
 			const collection = collections[name]?.items
@@ -418,14 +448,18 @@ async function build(src: Collection[], buildContext: BuildContext) {
 const normaliseWatchPath = (p: string) => p.replace(/\\/g, '/')
 
 /**
- * Build the vite plugin that validates collections and writes the generated modules
+ * Build the Vite plugin that validates collections and writes the generated modules
  * keep the runtime data and declaration files in the same pass
  * resolve package imports from the generated directory
  */
-export default function plugin(src: Collection[]): Plugin {
+export default function mdsrc(config: PluginConfig): Plugin {
+	const src = config.collections
+
 	// use one logger for the whole build so every step reports the same way
 	// stay chatty outside production
-	const logger = new Logger(process.env.NODE_ENV === 'production' ? 'error' : 'debug')
+	const logger = new Logger(
+		config.logger?.level ?? (process.env.NODE_ENV === 'production' ? 'error' : 'debug'),
+	)
 
 	// write generated files into a hidden folder at the project root
 	// keep the generated surface out of src
@@ -457,6 +491,7 @@ export default function plugin(src: Collection[]): Plugin {
 	// keep the helper signatures small
 	const buildContext = {
 		logger,
+		markdown: config.markdown,
 		outDir,
 		names: [],
 	} satisfies BuildContext
@@ -464,7 +499,6 @@ export default function plugin(src: Collection[]): Plugin {
 	let rebuildRunning = false
 	let rebuildQueued = false
 	let rebuildReason = 'change'
-
 	const rebuild = debounce((event: string, filePath: string) => {
 		const queue = () => {
 			void (async () => {

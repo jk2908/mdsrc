@@ -1,39 +1,43 @@
 {
-  "name": "mdsrc-monorepo",
+  "name": "@jk2908/mdsrc",
   "version": "0.3.0",
-  "private": true,
-  "workspaces": [
-    "packages/*",
-    "examples/*"
-  ],
   "type": "module",
   "author": "Jerome Kenway",
+  "description": "A Vite plugin for turning structured Markdown content into importable, type-safe modules",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jk2908/mdsrc.git"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "cd packages/mdsrc && bun run build",
-    "test": "cd packages/mdsrc && bun run test"
+    "build": "bun run ./build.ts && bun x tsc --project tsconfig.json --emitDeclarationOnly",
+    "test": "cd ../.. && bun test"
   },
   "dependencies": {
     "markdown-it-ts": "^1.0.0"
   },
-  "devDependencies": {
-    "@types/bun": "^1.3.13",
-    "@typescript/native-preview": "^7.0.0-dev.20260421.2",
-    "@types/node": "^24.0.1",
-    "oxfmt": "^0.35.0",
-    "oxlint": "^1.50.0",
-    "vite": "^5.4.2"
-  },
   "peerDependencies": {
     "vite": "^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "bugs": {
     "url": "https://github.com/jk2908/mdsrc/issues"
   },
-  "description": "A Vite plugin for managing markdown content with type safety",
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
   "homepage": "https://github.com/jk2908/mdsrc#readme",
   "keywords": [
     "markdown",

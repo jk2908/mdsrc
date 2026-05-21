@@ -1,13 +1,36 @@
+import type { MarkdownIt, MarkdownItOptions } from 'markdown-it-ts'
+
 import type { LogLevel, Logger } from './logger.js'
 
+type MarkdownItUseArgs = Parameters<MarkdownIt['use']>
+
+export type MarkdownItConfig = MarkdownItOptions
+
+export type MarkdownPlugin = MarkdownItUseArgs[0]
+
+export type MarkdownPluginUse =
+	| MarkdownPlugin
+	| readonly [
+			plugin: MarkdownPlugin,
+			...params: MarkdownItUseArgs extends [unknown, ...infer Params] ? Params : never,
+	  ]
+
+export type MarkdownConfig = {
+	plugins?: MarkdownPluginUse[]
+	config?: MarkdownItConfig
+}
+
 export type PluginConfig = {
+	collections: Collection[]
 	logger?: {
 		level?: LogLevel
 	}
+	markdown?: MarkdownConfig
 }
 
 export type BuildContext = {
 	logger: InstanceType<typeof Logger>
+	markdown?: MarkdownConfig
 	outDir?: string
 	names?: string[]
 }
@@ -34,7 +57,8 @@ export type Raw = {
 		slug: string
 		filename: string
 	}
-	body?: string
+	html: string
+	markdown: string
 } & Entries
 
 export type Types = Record<string, string>
