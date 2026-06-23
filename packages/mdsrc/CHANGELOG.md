@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 - 2026-06-23
+
+- Updated README to reflect the new schema API and removed outdated markdown-it references.
+
 ## 0.4.0 - 2026-06-23
 
 - Breaking: replaced the verbose schema API with a simplified string-based syntax. Fields are now declared as `fieldName: 'type'` instead of `fieldName: { type: 'type' }`, optional fields use a `?` suffix (e.g. `'metadata?'`), and nested objects are declared inline without a `schema` wrapper.

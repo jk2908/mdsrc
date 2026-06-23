@@ -11,27 +11,19 @@ npm install @jk2908/mdsrc
 ## Usage
 
 ```ts
-import plugin, { type MarkdownItConfig } from '@jk2908/mdsrc'
-import comark from '@comark/markdown-it'
+import plugin from '@jk2908/mdsrc'
 import { defineConfig } from 'vite'
-
-const markdownItConfig: MarkdownItConfig = {
-	linkify: true,
-}
 
 export default defineConfig({
 	plugins: [
 		plugin({
-			markdown: {
-				plugins: [comark],
-				config: markdownItConfig,
-			},
 			collections: [
 				{
 					dir: 'content',
 					name: 'post',
 					schema: {
-						title: { type: 'string' },
+						title: 'string',
+						'date?': 'date',
 					},
 				},
 			],
@@ -40,18 +32,29 @@ export default defineConfig({
 })
 ```
 
-The plugin reads markdown content, validates frontmatter against your schema, and generates typed modules during build and watch. Root config uses `collections`, optional `markdown`, and `logger`. Collection config uses `name`, `dir`, and `schema`.
+The plugin reads markdown content, validates frontmatter against your schema, and generates typed modules during build and watch. Root config uses `collections`, optional `compileOptions`, and `logger`. Collection config uses `name`, `dir`, and `schema`.
 
-Each entry exports both `html` and `markdown`.
+### Schema
 
-- `html` is rendered with `markdown-it-ts`, with hard line breaks preserved by default.
-- Raw HTML is escaped by default because the renderer runs with `html: false`.
-- `markdown` preserves the original body for custom renderers like `@comark/react`.
+Fields are declared as `fieldName: 'type'`. Supported types: `string`, `number`, `boolean`, `date`, `object`.
 
-Use `markdown.plugins` for `markdown-it-ts` compatible plugins, and `markdown.config` to pass renderer options.
-`MarkdownItConfig` is re-exported from `@jk2908/mdsrc`, and `markdown.config` is merged with the default renderer options `{ html: false, breaks: true }`.
+Optional fields use a `?` suffix: `'metadata?': { author: 'string' }`.
 
-See `examples/basic` for the default HTML output flow and `examples/components` for the shared `@comark/markdown-it` plugin used with React.
+Nested objects are declared inline:
+
+```ts
+schema: {
+	title: 'string',
+	'metadata?': {
+		author: 'string',
+		publishedAt: 'date',
+	},
+}
+```
+
+### Output
+
+Each entry exports a `body` field containing the rendered HTML.
 
 If you configure a collection with `name: 'post'`, `mdsrc` exposes `allPosts` from the package root.
 
@@ -61,8 +64,7 @@ import { allPosts } from '@jk2908/mdsrc'
 export const summaries = allPosts.map(post => ({
 	title: post.title,
 	slug: post.__mdsrc.slug,
-	html: post.html,
-	markdown: post.markdown,
+	body: post.body,
 }))
 ```
 
