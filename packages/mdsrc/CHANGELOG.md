@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 - 2026-06-23
+
+- Breaking: replaced the verbose schema API with a simplified string-based syntax. Fields are now declared as `fieldName: 'type'` instead of `fieldName: { type: 'type' }`, optional fields use a `?` suffix (e.g. `'metadata?'`), and nested objects are declared inline without a `schema` wrapper.
+- Added LRU file cache with bounded size and promotion-on-read to skip redundant disk writes during rebuilds.
+- Added structured error codes to validation issues (`INVALID_INPUT`, `UNKNOWN_KEY`, `MISSING_REQUIRED`, `INVALID_TYPE`, `INVALID_DATE`) for programmatic error handling.
+- Added date coercion support for `Date` objects and numeric timestamps in addition to strings.
+- Added unknown key detection during validation — fields not declared in the schema now produce an `UNKNOWN_KEY` issue.
+- Added GitHub Actions CI workflow to run tests on push and pull requests.
+- Moved tests to a standalone `test.ts` file with a dedicated vitest config.
+- Updated the basic example and removed the components example.
+
 ## 0.3.0 - 2026-05-21
 
 - Breaking: moved markdown customization under the `markdown` key, replacing the old root-level `plugins` option with `markdown.plugins`.
