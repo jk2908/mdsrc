@@ -8,6 +8,7 @@
 		"skipLibCheck": true,
 		"types": ["bun"],
 		"declaration": true,
+		"declarationMap": true,
 		"allowSyntheticDefaultImports": true,
 		"noUnusedLocals": true,
 		"rootDir": "src",

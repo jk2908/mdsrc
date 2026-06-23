@@ -4,14 +4,13 @@ import path from 'node:path'
 
 import type { Plugin, ViteDevServer } from 'vite'
 
-import MarkdownIt from 'markdown-it-ts'
+import { markdownToHtml, type CompileOptions, type MarkdownToHtmlResult } from 'satteri'
 
 import type {
 	BuildContext,
 	Collection,
 	Entries,
 	Issue,
-	MarkdownItConfig,
 	PluginConfig,
 	Raw,
 	Result,
@@ -19,47 +18,32 @@ import type {
 } from './types.js'
 import { GENERATED_DIR, PKG_NAME } from './config.js'
 import { Logger } from './logger.js'
-import { capitalise, debounce, pluralise } from './utils.js'
+import { capitalise, debounce, deep, isRecord, pluralise } from './utils.js'
 
-const fileCache = new Map<string, string>()
+export const DEFAULT_COMPILE_OPTIONS = {
+	features: {
+		frontmatter: true,
+	},
+} satisfies CompileOptions
 
-const DEFAULT_MARKDOWN_CONFIG = {
-	html: false,
-	breaks: true,
-} satisfies MarkdownItConfig
-
-export type { MarkdownItConfig } from './types.js'
-
-function toModuleName(name: string) {
-	return name.toLowerCase()
-}
+export type { CompileOptions } from './types.js'
 
 /**
- * Split a markdown file into frontmatter data and the body content
- * keep the format small so the parser stays easy to trust
- * fail fast if the opening fence is missing
+ * Parse YAML or TOML frontmatter
  */
-function parse(content: string) {
-	// look for one fenced frontmatter block right at the top
-	// leave the rest of the markdown body alone
-	const regex = /^---\r?\n([\s\S]*?)\r?\n---([\s\S]*)$/
-	const match = content.match(regex)
-	const metadata: Entries = {}
+export async function parse(frontmatter: MarkdownToHtmlResult['frontmatter']) {
+	if (!frontmatter) return {}
 
-	if (!match) throw new Error('Invalid frontmatter')
+	const { kind, value } = frontmatter
 
-	const [, frontmatter, body] = match
-
-	if (frontmatter) {
-		// treat each line as a simple key: value pair
-		// this is a small subset, not full yaml
-		for (const line of frontmatter.split('\n')) {
-			const [key, value] = line.split(': ').map(str => str.trim())
-			metadata[key as keyof Entries] = value
+	switch (kind) {
+		case 'yaml': {
+			return (await import('yaml')).parse(value)
+		}
+		case 'toml': {
+			return (await import('smol-toml')).parse(value)
 		}
 	}
-
-	return { metadata, body }
 }
 
 /**
@@ -68,21 +52,8 @@ function parse(content: string) {
  * return an empty list if the directory read fails
  */
 export async function create(dir: string, buildContext: BuildContext) {
-	const { logger } = buildContext
-	const markdown = new MarkdownIt({
-		...DEFAULT_MARKDOWN_CONFIG,
-		...buildContext.markdown?.config,
-	})
-
-	for (const plugin of buildContext.markdown?.plugins ?? []) {
-		if (typeof plugin === 'function' || 'default' in plugin) {
-			markdown.use(plugin)
-			continue
-		}
-
-		const [applyPlugin, ...params] = plugin
-		markdown.use(applyPlugin, ...params)
-	}
+	const { logger, compileOptions = {} } = buildContext
+	const { features, ...restCompileOptions } = compileOptions
 
 	try {
 		// only pick up markdown files from this directory
@@ -93,7 +64,7 @@ export async function create(dir: string, buildContext: BuildContext) {
 		const filePaths = files.map(file => path.join(dir, file))
 
 		if (!files.length) {
-			console.warn(`mdsrc: ${dir} is empty`)
+			logger.warn(`mdsrc: ${dir} is empty`)
 			return []
 		}
 
@@ -101,67 +72,113 @@ export async function create(dir: string, buildContext: BuildContext) {
 			filePaths.map(async filePath => {
 				const file = path.basename(filePath)
 
-				// keep the parsed fields, body, and mdsrc metadata together
-				// build the slug from the filename
-				const parsed = parse(await fs.readFile(filePath, 'utf-8'))
+				const { html, frontmatter: rawFrontmatter } = markdownToHtml(
+					await fs.readFile(filePath, 'utf-8'),
+					{
+						features: {
+							...DEFAULT_COMPILE_OPTIONS.features,
+							...features,
+						},
+						...restCompileOptions,
+					},
+				)
 
-				const body = parsed.body ? parsed.body.trim() : ''
+				const frontmatter = await parse(rawFrontmatter)
 
 				return {
-					...parsed.metadata,
+					...frontmatter,
 					__mdsrc: {
 						slug: path.basename(file, '.md').toLowerCase().replace(/\s+/g, '-'),
 						filename: file,
 					},
-					html: body ? markdown.render(body).trim() : body,
-					markdown: body,
+					body: html.trim(),
 				} satisfies Raw
 			}),
 		)
 	} catch (err) {
 		logger.error('[create]: failed to create entries', err)
-		return []
+		throw err
 	}
+}
+
+/**
+ * Returns whether the error was caused by a missing file or directory
+ */
+export function isENOENT(err: unknown) {
+	return err instanceof Error && 'code' in err && err.code === 'ENOENT'
+}
+
+/**
+ * LRU cache for file content. Stores the last written content per file path
+ * so `maybeWrite` can skip disk I/O when nothing has changed.
+ *
+ * Uses Map insertion order to track recency: the front of the map holds the
+ * least recently used entries, which are evicted first when the cache is full.
+ */
+export const fileCache = new Map<string, string>()
+
+export const FILE_CACHE_MAX_SIZE = 100
+
+/**
+ * Promote an existing cache entry to most-recently-used by deleting and
+ * re-inserting it, which moves it to the end of the Map's iteration
+ * order. If the cache is at capacity, evict the least recently used
+ * entry (front) before inserting
+ */
+export function setFileCache(filePath: string, content: string) {
+	fileCache.delete(filePath)
+
+	if (fileCache.size >= FILE_CACHE_MAX_SIZE) {
+		const lru = fileCache.keys().next().value
+
+		if (lru !== undefined) {
+			fileCache.delete(lru)
+		}
+	}
+
+	fileCache.set(filePath, content)
+}
+
+/**
+ * Retrieve a cached value and promote it to most-recently-used so it won't
+ * be evicted while still actively referenced
+ */
+export function getFileCache(filePath: string) {
+	const content = fileCache.get(filePath)
+
+	if (content !== undefined) {
+		setFileCache(filePath, content)
+	}
+
+	return content
 }
 
 /**
  * Write a file only if the content has changed since the last build
  */
-async function maybeWrite(filePath: string, content: string) {
-	const cached = fileCache.get(filePath)
+export async function maybeWrite(filePath: string, content: string) {
+	const cached = getFileCache(filePath)
 
-	if (cached === content) {
-		try {
-			await fs.access(filePath)
+	if (cached !== content) {
+		// cache says content changed, write without reading
+		await fs.writeFile(filePath, content)
+		setFileCache(filePath, content)
+
+		return true
+	}
+
+	// cache miss or cache hit with same content — verify on disk
+	try {
+		if ((await fs.readFile(filePath, 'utf-8')) === content) {
+			setFileCache(filePath, content)
 			return false
-		} catch (err) {
-			if (!(err instanceof Error) || !('code' in err) || err.code !== 'ENOENT') {
-				throw err
-			}
-
-			// file was deleted since the last build, fall through and write it again
 		}
+	} catch (err) {
+		if (!isENOENT(err)) throw err
 	}
 
-	if (cached === undefined) {
-		try {
-			const current = await fs.readFile(filePath, 'utf-8')
-			fileCache.set(filePath, current)
-
-			if (current === content) {
-				fileCache.set(filePath, content)
-				return false
-			}
-		} catch (err) {
-			if (!(err instanceof Error) || !('code' in err) || err.code !== 'ENOENT') {
-				throw err
-			}
-		}
-	}
-
-	// file is new or changed since the last build, write it and refresh the cache
 	await fs.writeFile(filePath, content)
-	fileCache.set(filePath, content)
+	setFileCache(filePath, content)
 
 	return true
 }
@@ -169,9 +186,9 @@ async function maybeWrite(filePath: string, content: string) {
 /**
  * Check one entry against the declared schema and coerce what can be coerced
  * leave missing optional keys alone instead of treating them as errors
- * normalise dates to iso strings for output
+ * normalise dates to ISO strings for output
  */
-function validate(input: Entries, schema: Schema) {
+export function validate(input: Entries, schema: Schema) {
 	// keep valid values separate so bad fields never sneak into output
 	const validated: Entries = {}
 	// collect every problem so one pass can report the lot
@@ -179,106 +196,176 @@ function validate(input: Entries, schema: Schema) {
 
 	// bail out early if the frontmatter is not even an object
 	if (typeof input !== 'object' || input === null) {
-		issues.push({ message: 'Input must be an object' })
+		issues.push({ message: 'Input must be an object', code: 'INVALID_INPUT' })
 		return { issues } satisfies Result<Entries>
 	}
 
-	// drive validation from the schema so the rules always stay in charge
-	for (const key in schema) {
-		const entry = schema[key]
+	const schemaKeys = new Set(Object.keys(schema).map(k => parseKey(k).key))
 
-		// if the key is missing, only complain when the schema says it must exist
-		if (!(key in input)) {
-			if (!entry.optional) {
-				issues.push({ message: `Missing required key: ${key}` })
+	// bail out early on unknown keys
+	for (const key in input) {
+		if (!schemaKeys.has(key)) {
+			issues.push({ message: `Unknown key: ${key}`, code: 'UNKNOWN_KEY' })
+		}
+	}
+
+	// bail
+	if (issues.length) return { issues } satisfies Result<Entries>
+
+	function walk(key: string, schemaValue: Schema.Value, data: unknown) {
+		const { optional, key: parsedKey } = parseKey(key)
+
+		if (data === undefined) {
+			if (!optional) {
+				issues.push({
+					message: `Missing required key: ${parsedKey}`,
+					code: 'MISSING_REQUIRED',
+				})
 			}
 
-			continue
+			return
 		}
 
-		// once the key exists, coerce it into the shape the schema expects
-		const value = input[key]
-
-		switch (entry.type) {
-			case 'string': {
-				// strings just need the basic type check and any length limits
-				if (typeof value !== 'string') {
-					issues.push({ message: `Key ${key} must be a string` })
-				} else {
-					if (entry.minLength && value.length < entry.minLength) {
+		// check primitives
+		if (typeof schemaValue === 'string') {
+			switch (schemaValue) {
+				case 'string': {
+					if (typeof data !== 'string') {
 						issues.push({
-							message: `Key ${key} must be at least ${entry.minLength} characters`,
+							message: `Key ${parsedKey} must be a string`,
+							code: 'INVALID_TYPE',
 						})
+						return
 					}
 
-					if (entry.maxLength && value.length > entry.maxLength) {
+					deep(validated, parsedKey, data)
+					break
+				}
+
+				case 'number': {
+					let num = data
+
+					if (typeof data === 'string' && !Number.isNaN(Number(data))) {
+						num = Number(data)
+					}
+
+					if (typeof num !== 'number' || Number.isNaN(num)) {
 						issues.push({
-							message: `Key ${key} must be at most ${entry.maxLength} characters`,
+							message: `Key ${parsedKey} must be a number`,
+							code: 'INVALID_TYPE',
 						})
+						return
 					}
 
-					validated[key] = value
+					deep(validated, parsedKey, num)
+					break
 				}
 
-				break
-			}
-			case 'number': {
-				let num = value
+				case 'boolean': {
+					let bool = data
 
-				// frontmatter usually starts life as text, so numeric strings still count
-				if (typeof value === 'string' && !Number.isNaN(Number(value))) {
-					num = Number(value)
-				}
-
-				if (typeof num !== 'number') {
-					issues.push({ message: `Key ${key} must be a number` })
-				} else {
-					validated[key] = num
-				}
-
-				break
-			}
-			case 'boolean': {
-				let bool = value
-				// booleans often come through as the words true or false
-				if (typeof value === 'string') {
-					if (value.toLowerCase() === 'true') {
-						bool = true
-					} else if (value.toLowerCase() === 'false') {
-						bool = false
+					if (typeof data === 'string') {
+						if (data.toLowerCase() === 'true') {
+							bool = true
+						} else if (data.toLowerCase() === 'false') {
+							bool = false
+						}
 					}
+
+					if (typeof bool !== 'boolean') {
+						issues.push({
+							message: `Key ${parsedKey} must be a boolean`,
+							code: 'INVALID_TYPE',
+						})
+						return
+					}
+
+					deep(validated, parsedKey, bool)
+					break
 				}
 
-				if (typeof bool !== 'boolean') {
-					issues.push({ message: `Key ${key} must be a boolean` })
-				} else {
-					validated[key] = bool
-				}
+				case 'date': {
+					let date: Date
 
-				break
-			}
-			case 'date': {
-				// keep dates as iso strings because that is what generated output exposes
-				if (typeof value !== 'string') {
-					issues.push({ message: `Key ${key} must be a date` })
-				} else {
-					const date = new Date(value)
+					if (data instanceof Date) {
+						date = data
+					} else if (typeof data === 'string' || typeof data === 'number') {
+						date = new Date(data)
+					} else {
+						issues.push({
+							message: `Key ${parsedKey} must be a Date, string or number`,
+							code: 'INVALID_TYPE',
+						})
+						return
+					}
 
 					if (Number.isNaN(date.getTime())) {
-						issues.push({ message: `Key ${key} must be a valid date` })
-					} else {
-						validated[key] = date.toISOString()
+						issues.push({
+							message: `Key ${parsedKey} must be a valid date`,
+							code: 'INVALID_DATE',
+						})
+						return
 					}
-				}
 
-				break
+					deep(validated, parsedKey, date.toISOString())
+					break
+				}
+			}
+		} else {
+			if (!isRecord(data)) {
+				issues.push({
+					message: `Key ${parsedKey} must be an object`,
+					code: 'INVALID_TYPE',
+				})
+				return
+			}
+
+			const obj = data
+
+			for (const subKey in schemaValue) {
+				walk(`${parsedKey}.${subKey}`, schemaValue[subKey], obj[parseKey(subKey).key])
 			}
 		}
 	}
 
-	// hand back the clean entry when validation passes
-	// otherwise return the full issue list
+	for (const key in schema) {
+		walk(key, schema[key], input[parseKey(key).key])
+	}
+
+	// return the clean entry when validation passes, otherwise return the full
+	// issue list
 	return (issues.length ? { issues } : { value: validated }) satisfies Result<Entries>
+}
+
+export function parseKey(k: string) {
+	const optional = k.endsWith('?')
+
+	return {
+		optional,
+		key: optional ? k.slice(0, -1) : k,
+	}
+}
+
+export function schemaToType(schema: Schema) {
+	const fields = Object.entries(schema)
+		.map(([k, v]) => {
+			const { key, optional } = parseKey(k)
+
+			let type: string
+
+			if (typeof v === 'string') {
+				// date will be an ISO string post validation
+				type = v === 'date' ? 'string' : v
+			} else {
+				// recursively call for record shapes
+				type = schemaToType(v)
+			}
+
+			return `${key}${optional ? '?' : ''}: ${type}`
+		})
+		.join('\n  ')
+
+	return `{ ${fields} }`
 }
 
 async function build(src: Collection[], buildContext: BuildContext) {
@@ -308,34 +395,23 @@ async function build(src: Collection[], buildContext: BuildContext) {
 
 			// check each raw item before it makes it into the generated collection
 			// bad entries get logged and dropped
-			const validated = await Promise.all(
-				raw.map(async item => {
-					try {
-						const { html, markdown, __mdsrc, ...metadata } = item
-						const res = validate(metadata, collection.schema)
+			const validated = raw.map(item => {
+				const { body, __mdsrc, ...metadata } = item
+				const res = validate(metadata, collection.schema)
 
-						if (res.issues) throw new Error(JSON.stringify(res.issues, null, 2))
+				if (res.issues) throw new Error(JSON.stringify(res.issues, null, 2))
 
-						return {
-							html,
-							markdown,
-							...res.value,
-							__mdsrc,
-						}
-					} catch (err) {
-						logger.error(
-							`[buildStart]: failed to validate item in ${collection.name}`,
-							err,
-						)
-						return null
-					}
-				}),
-			)
+				return {
+					...res.value,
+					body,
+					__mdsrc,
+				}
+			})
 
 			collections[collection.name] = {
 				// keep the cleaned items with the schema they came from
 				// both js and dts generation read from this shape
-				items: validated.filter(e => e !== null),
+				items: validated,
 				schema: collection.schema,
 			}
 		}
@@ -354,21 +430,10 @@ async function build(src: Collection[], buildContext: BuildContext) {
 				path.join(outDir, 'types.ts'),
 				`
 					${names
-						// make one named type per collection so the dts mirrors the js surface.
-						// html and markdown are always present on generated entries
 						.map(
 							name => `
-								export type ${capitalise(name)} = {
-									html: string
-									markdown: string
-									${Object.entries(collections[name].schema)
-										// turn each schema field into a ts property line
-										// keep optional markers and date strings in step with validation
-										.map(
-											([key, entry]) =>
-												`${key}${entry.optional ? '?' : ''}: ${entry.type === 'date' ? 'string' : entry.type}`,
-										)
-										.join('\n  ')}
+								export type ${capitalise(name)} = ${schemaToType(collections[name].schema)} & {
+									body: string,
 									__mdsrc: {
 										slug: string
 										filename: string
@@ -410,7 +475,6 @@ async function build(src: Collection[], buildContext: BuildContext) {
 		)
 
 		// serialise each validated collection as a plain module for Vite to load
-		// empty collections still export a stable array shape
 		for (const name of names) {
 			const collection = collections[name]?.items
 			const fileName = toModuleName(name)
@@ -444,8 +508,12 @@ async function build(src: Collection[], buildContext: BuildContext) {
 	}
 }
 
-// convert watcher paths to a consistent slash format before comparing them
-const normaliseWatchPath = (p: string) => p.replace(/\\/g, '/')
+/**
+ * Convert watcher paths to a consistent slash format before comparing them
+ */
+function normaliseWatchPath(p: string) {
+	return p.replace(/\\/g, '/')
+}
 
 /**
  * Build the Vite plugin that validates collections and writes the generated modules
@@ -484,14 +552,15 @@ export default function mdsrc(config: PluginConfig): Plugin {
 		}
 	}
 
-	const isWatchedFile = (filePath: string) =>
-		watchedRoots.some(root => resolveWatchFile(filePath).startsWith(root))
+	function watchedFile(filePath: string) {
+		return watchedRoots.some(root => resolveWatchFile(filePath).startsWith(root))
+	}
 
 	// pass shared build tools into helpers without dragging lots of state around
 	// keep the helper signatures small
 	const buildContext = {
 		logger,
-		markdown: config.markdown,
+		compileOptions: config.compileOptions,
 		outDir,
 		names: [],
 	} satisfies BuildContext
@@ -499,8 +568,9 @@ export default function mdsrc(config: PluginConfig): Plugin {
 	let rebuildRunning = false
 	let rebuildQueued = false
 	let rebuildReason = 'change'
+
 	const rebuild = debounce((event: string, filePath: string) => {
-		const queue = () => {
+		function queue() {
 			void (async () => {
 				// collapse bursts of file events into one active rebuild plus a single
 				// queued rerun when changes land mid-build
@@ -528,7 +598,7 @@ export default function mdsrc(config: PluginConfig): Plugin {
 		}
 
 		// ignore anything outside the watched content dirs
-		if (!isWatchedFile(filePath)) return
+		if (!watchedFile(filePath)) return
 
 		const file = resolveWatchFile(filePath)
 
@@ -578,9 +648,7 @@ export default function mdsrc(config: PluginConfig): Plugin {
 		resolveId(id) {
 			// point imports at generated files rather than source files
 			// that makes the package behave like a normal module
-			if (id === PKG_NAME) {
-				return path.join(outDir, 'index.js')
-			}
+			if (id === PKG_NAME) return path.join(outDir, 'index.js')
 
 			if (id.startsWith(`${PKG_NAME}/`)) {
 				// allow collection subpath imports once the build knows their names
@@ -590,12 +658,15 @@ export default function mdsrc(config: PluginConfig): Plugin {
 					name => name === subpath || toModuleName(name) === subpath,
 				)
 
-				if (match) {
-					return path.join(outDir, `${toModuleName(match)}.js`)
-				}
+				if (match) return path.join(outDir, `${toModuleName(match)}.js`)
 			}
 
 			return null
 		},
 	}
 }
+
+export function toModuleName(name: string) {
+	return name.toLowerCase()
+}
+

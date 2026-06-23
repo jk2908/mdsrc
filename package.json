@@ -1,28 +1,13 @@
 {
   "name": "mdsrc-monorepo",
   "version": "0.3.0",
-  "private": true,
-  "workspaces": [
-    "packages/*",
-    "examples/*"
-  ],
-  "type": "module",
   "author": "Jerome Kenway",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/jk2908/mdsrc.git"
   },
-  "scripts": {
-    "build": "cd packages/mdsrc && bun run build",
-    "test": "cd packages/mdsrc && bun run test"
-  },
-  "dependencies": {
-    "markdown-it-ts": "^1.0.0"
-  },
   "devDependencies": {
-    "@types/bun": "^1.3.13",
     "@typescript/native-preview": "^7.0.0-dev.20260421.2",
-    "@types/node": "^24.0.1",
     "oxfmt": "^0.35.0",
     "oxlint": "^1.50.0",
     "vite": "^5.4.2"
@@ -42,5 +27,19 @@
     "content-management",
     "frontmatter"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "cd packages/mdsrc && bun run build",
+    "test": "cd packages/mdsrc && bun run test"
+  },
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "dependencies": {
+    "arktype": "^2.2.1",
+    "zod": "^4.4.3"
+  }
 }

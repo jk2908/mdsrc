@@ -19,3 +19,30 @@ export function debounce<T extends unknown[]>(fn: (...args: T) => void, wait: nu
 		}, wait)
 	}
 }
+
+export function dedent(str: string) {
+	return str
+		.replace(/^\n/, '')
+		.replace(/\s+$/, '')
+		.split('\n')
+		.filter(Boolean)
+		.map(line => line.replace(/^\s+/, ''))
+		.join('\n')
+}
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function deep(obj: any, path: string, value: unknown) {
+	const parts = path.split('.')
+	let cur = obj
+
+	for (let i = 0; i < parts.length - 1; i++) {
+		const k = parts[i]
+		cur[k] ??= {}
+		cur = cur[k]
+	}
+
+	cur[parts.at(-1)!] = value
+}
