@@ -54,7 +54,7 @@ schema: {
 
 ### Compile Options
 
-Pass `compileOptions` to customize markdown parsing via satteri:
+Pass `compileOptions` to customise markdown parsing via satteri:
 
 ```ts
 plugin({
@@ -72,15 +72,7 @@ plugin({
 })
 ```
 
-Available features:
-- `gfm` - GitHub Flavored Markdown (tables, footnotes, strikethrough, task lists). Pass `{ footnotes: false }` to disable footnotes only.
-- `frontmatter` - YAML and TOML frontmatter parsing.
-- `math` - LaTeX math blocks (`$inline$` and `$$display$$`). Pass `{ singleDollarTextMath: false }` to keep `$` as literal text.
-- `smartPunctuation` - Curly quotes, em-dashes, ellipses. Pass `{ quotes: false, dashes: true, ellipses: true }` for granular control.
-- `headingAttributes` - Heading IDs and classes (`# Title {#id .class}`).
-- `directive` - Container directives (`:::note`).
-- `superscript` / `subscript` - `^super^` and `~sub~` syntax.
-- `wikilinks` - Obsidian-style `[[links]]`.
+See [satteri](https://satteri.bruits.org/) for the full list of compile options and feature toggles.
 
 ### Output
 
