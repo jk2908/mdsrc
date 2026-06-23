@@ -1,13 +1,12 @@
-import fs from 'node:fs/promises'
+/// <reference types="@types/bun" />
+
 import path from 'node:path'
 
 const rootDir = import.meta.dir
 const distDir = path.join(rootDir, 'dist')
 
-await fs.rm(distDir, { recursive: true, force: true })
-
 const result = await Bun.build({
-	entrypoints: [path.join(rootDir, 'src/index.ts')],
+	entrypoints: [path.join(rootDir, './src/index.ts')],
 	format: 'esm',
 	outdir: distDir,
 	packages: 'external',

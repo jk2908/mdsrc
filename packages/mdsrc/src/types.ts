@@ -1,48 +1,34 @@
-import type { MarkdownIt, MarkdownItOptions } from 'markdown-it-ts'
+import type { CompileOptions as SatteriCompileOptions } from 'satteri'
 
 import type { LogLevel, Logger } from './logger.js'
 
-type MarkdownItUseArgs = Parameters<MarkdownIt['use']>
-
-export type MarkdownItConfig = MarkdownItOptions
-
-export type MarkdownPlugin = MarkdownItUseArgs[0]
-
-export type MarkdownPluginUse =
-	| MarkdownPlugin
-	| readonly [
-			plugin: MarkdownPlugin,
-			...params: MarkdownItUseArgs extends [unknown, ...infer Params] ? Params : never,
-	  ]
-
-export type MarkdownConfig = {
-	plugins?: MarkdownPluginUse[]
-	config?: MarkdownItConfig
-}
+export type CompileOptions = SatteriCompileOptions
 
 export type PluginConfig = {
 	collections: Collection[]
 	logger?: {
 		level?: LogLevel
 	}
-	markdown?: MarkdownConfig
+	compileOptions?: CompileOptions
 }
 
 export type BuildContext = {
 	logger: InstanceType<typeof Logger>
-	markdown?: MarkdownConfig
+	compileOptions?: CompileOptions
 	outDir?: string
 	names?: string[]
 }
 
-export type SchemaEntry = {
-	type: 'string' | 'number' | 'boolean' | 'date'
-	optional?: boolean
-	minLength?: number
-	maxLength?: number
+export namespace Schema {
+	type Primitive = 'string' | 'number' | 'boolean' | 'date' | 'object'
+
+	export type Key = string
+	export type Value = Primitive | { [key: Key]: Value }
 }
 
-export type Schema = Record<string, SchemaEntry>
+export interface Schema {
+	[key: Schema.Key]: Schema.Value
+}
 
 export type Collection = {
 	name: string
@@ -57,13 +43,20 @@ export type Raw = {
 		slug: string
 		filename: string
 	}
-	html: string
-	markdown: string
+	body: string
 } & Entries
 
 export type Types = Record<string, string>
 
+export type IssueCode =
+	| 'MISSING_REQUIRED'
+	| 'UNKNOWN_KEY'
+	| 'INVALID_TYPE'
+	| 'INVALID_DATE'
+	| 'INVALID_INPUT'
+
 export type Issue = {
+	readonly code: IssueCode
 	readonly message: string
 }
 
