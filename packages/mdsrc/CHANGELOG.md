@@ -10,6 +10,7 @@
 - Added GitHub Actions CI workflow to run tests on push and pull requests.
 - Moved tests to a standalone `test.ts` file with a dedicated vitest config.
 - Updated the basic example and removed the components example.
+- Use `satteri` for Rust powered markdown parsing.
 
 ## 0.3.0 - 2026-05-21
 
