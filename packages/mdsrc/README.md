@@ -52,6 +52,36 @@ schema: {
 }
 ```
 
+### Compile Options
+
+Pass `compileOptions` to customize markdown parsing via satteri:
+
+```ts
+plugin({
+	compileOptions: {
+		features: {
+			gfm: true, // tables, footnotes, strikethrough, task lists
+			frontmatter: true, // YAML (---) and TOML (+++)
+			math: false, // LaTeX math blocks
+			smartPunctuation: true, // curly quotes, em-dashes, ellipses
+		},
+		mdastPlugins: [/* transform mdast tree */],
+		hastPlugins: [/* transform hast tree */],
+	},
+	collections: [/* ... */],
+})
+```
+
+Available features:
+- `gfm` - GitHub Flavored Markdown (tables, footnotes, strikethrough, task lists). Pass `{ footnotes: false }` to disable footnotes only.
+- `frontmatter` - YAML and TOML frontmatter parsing.
+- `math` - LaTeX math blocks (`$inline$` and `$$display$$`). Pass `{ singleDollarTextMath: false }` to keep `$` as literal text.
+- `smartPunctuation` - Curly quotes, em-dashes, ellipses. Pass `{ quotes: false, dashes: true, ellipses: true }` for granular control.
+- `headingAttributes` - Heading IDs and classes (`# Title {#id .class}`).
+- `directive` - Container directives (`:::note`).
+- `superscript` / `subscript` - `^super^` and `~sub~` syntax.
+- `wikilinks` - Obsidian-style `[[links]]`.
+
 ### Output
 
 Each entry exports a `body` field containing the rendered HTML.
