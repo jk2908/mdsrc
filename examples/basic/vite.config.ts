@@ -1,19 +1,27 @@
 import { defineConfig } from 'vite'
 
 import mdsrc from '@jk2908/mdsrc'
+import babel from '@rolldown/plugin-babel'
+import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 
+// https://vite.dev/config/
 export default defineConfig({
 	plugins: [
 		mdsrc({
 			collections: [
 				{
-					name: 'post',
-					dir: 'content/post',
+					name: 'Posts',
+					dir: 'posts',
 					schema: {
-						title: { type: 'string' },
+						title: 'string',
+						'metadata?': {
+							author: 'string',
+						},
 					},
 				},
 			],
 		}),
+		react(),
+		babel({ presets: [reactCompilerPreset()] }),
 	],
 })
