@@ -6,19 +6,11 @@ import type { Plugin, ViteDevServer } from 'vite'
 
 import { markdownToHtml, type CompileOptions, type MarkdownToHtmlResult } from 'satteri'
 
-import type {
-	BuildContext,
-	Collection,
-	Entries,
-	Issue,
-	PluginConfig,
-	Raw,
-	Result,
-	Schema,
-} from './types.js'
-import { GENERATED_DIR, PKG_NAME } from './config.js'
+import type { BuildContext, Collection, PluginConfig, Raw, Schema } from './types.js'
+import { AUTOGEN_MSG, GENERATED_DIR, PKG_NAME } from './config.js'
 import { Logger } from './logger.js'
-import { capitalise, debounce, deep, isRecord, pluralise } from './utils.js'
+import { capitalise, debounce, pluralise } from './utils.js'
+import { parseKey, validate } from './validate.js'
 
 export const DEFAULT_COMPILE_OPTIONS = {
 	features: {
@@ -183,169 +175,6 @@ export async function maybeWrite(filePath: string, content: string) {
 	return true
 }
 
-/**
- * Check one entry against the declared schema and coerce what can be coerced
- * leave missing optional keys alone instead of treating them as errors
- * normalise dates to ISO strings for output
- */
-export function validate(input: Entries, schema: Schema) {
-	// keep valid values separate so bad fields never sneak into output
-	const validated: Entries = {}
-	// collect every problem so one pass can report the lot
-	const issues: Issue[] = []
-
-	// bail out early if the frontmatter is not even an object
-	if (typeof input !== 'object' || input === null) {
-		issues.push({ message: 'Input must be an object', code: 'INVALID_INPUT' })
-		return { issues } satisfies Result<Entries>
-	}
-
-	const schemaKeys = new Set(Object.keys(schema).map(k => parseKey(k).key))
-
-	// bail out early on unknown keys
-	for (const key in input) {
-		if (!schemaKeys.has(key)) {
-			issues.push({ message: `Unknown key: ${key}`, code: 'UNKNOWN_KEY' })
-		}
-	}
-
-	// bail
-	if (issues.length) return { issues } satisfies Result<Entries>
-
-	function walk(key: string, schemaValue: Schema.Value, data: unknown) {
-		const { optional, key: parsedKey } = parseKey(key)
-
-		if (data === undefined) {
-			if (!optional) {
-				issues.push({
-					message: `Missing required key: ${parsedKey}`,
-					code: 'MISSING_REQUIRED',
-				})
-			}
-
-			return
-		}
-
-		// check primitives
-		if (typeof schemaValue === 'string') {
-			switch (schemaValue) {
-				case 'string': {
-					if (typeof data !== 'string') {
-						issues.push({
-							message: `Key ${parsedKey} must be a string`,
-							code: 'INVALID_TYPE',
-						})
-						return
-					}
-
-					deep(validated, parsedKey, data)
-					break
-				}
-
-				case 'number': {
-					let num = data
-
-					if (typeof data === 'string' && !Number.isNaN(Number(data))) {
-						num = Number(data)
-					}
-
-					if (typeof num !== 'number' || Number.isNaN(num)) {
-						issues.push({
-							message: `Key ${parsedKey} must be a number`,
-							code: 'INVALID_TYPE',
-						})
-						return
-					}
-
-					deep(validated, parsedKey, num)
-					break
-				}
-
-				case 'boolean': {
-					let bool = data
-
-					if (typeof data === 'string') {
-						if (data.toLowerCase() === 'true') {
-							bool = true
-						} else if (data.toLowerCase() === 'false') {
-							bool = false
-						}
-					}
-
-					if (typeof bool !== 'boolean') {
-						issues.push({
-							message: `Key ${parsedKey} must be a boolean`,
-							code: 'INVALID_TYPE',
-						})
-						return
-					}
-
-					deep(validated, parsedKey, bool)
-					break
-				}
-
-				case 'date': {
-					let date: Date
-
-					if (data instanceof Date) {
-						date = data
-					} else if (typeof data === 'string' || typeof data === 'number') {
-						date = new Date(data)
-					} else {
-						issues.push({
-							message: `Key ${parsedKey} must be a Date, string or number`,
-							code: 'INVALID_TYPE',
-						})
-						return
-					}
-
-					if (Number.isNaN(date.getTime())) {
-						issues.push({
-							message: `Key ${parsedKey} must be a valid date`,
-							code: 'INVALID_DATE',
-						})
-						return
-					}
-
-					deep(validated, parsedKey, date.toISOString())
-					break
-				}
-			}
-		} else {
-			if (!isRecord(data)) {
-				issues.push({
-					message: `Key ${parsedKey} must be an object`,
-					code: 'INVALID_TYPE',
-				})
-				return
-			}
-
-			const obj = data
-
-			for (const subKey in schemaValue) {
-				walk(`${parsedKey}.${subKey}`, schemaValue[subKey], obj[parseKey(subKey).key])
-			}
-		}
-	}
-
-	for (const key in schema) {
-		walk(key, schema[key], input[parseKey(key).key])
-	}
-
-	// return the clean entry when validation passes, otherwise return the full
-	// issue list
-	return (issues.length ? { issues } : { value: validated }) satisfies Result<Entries>
-}
-
-export function parseKey(k: string) {
-	const optional = k.endsWith('?')
-
-	return {
-		optional,
-		key: optional ? k.slice(0, -1) : k,
-	}
-}
-
 export function schemaToType(schema: Schema) {
 	const fields = Object.entries(schema)
 		.map(([k, v]) => {
@@ -355,7 +184,7 @@ export function schemaToType(schema: Schema) {
 
 			if (typeof v === 'string') {
 				// date will be an ISO string post validation
-				type = v === 'date' ? 'string' : v
+				type = v === 'date' ? 'string' : v === 'array' ? 'any[]' : v
 			} else {
 				// recursively call for record shapes
 				type = schemaToType(v)
@@ -428,10 +257,13 @@ async function build(src: Collection[], buildContext: BuildContext) {
 		promises.push(
 			maybeWrite(
 				path.join(outDir, 'types.ts'),
-				`
+				` ${AUTOGEN_MSG}
+				
 					${names
 						.map(
 							name => `
+								${AUTOGEN_MSG}
+
 								export type ${capitalise(name)} = ${schemaToType(collections[name].schema)} & {
 									body: string,
 									__mdsrc: {
@@ -450,7 +282,8 @@ async function build(src: Collection[], buildContext: BuildContext) {
 		promises.push(
 			maybeWrite(
 				path.join(outDir, 'index.d.ts'),
-				`	
+				`	${AUTOGEN_MSG}
+
 					import type { ${names.map(name => capitalise(name)).join(', ')} } from './types.js'
 
 					${names
@@ -482,7 +315,9 @@ async function build(src: Collection[], buildContext: BuildContext) {
 			promises.push(
 				maybeWrite(
 					path.join(outDir, `${fileName}.js`),
-					`export const all${capitalise(pluralise(name, 2))} = ${collection?.length ? JSON.stringify(collection) : '[]'}`.trim(),
+					`	${AUTOGEN_MSG}
+		
+						export const all${capitalise(pluralise(name, 2))} = ${collection?.length ? JSON.stringify(collection) : '[]'}`.trim(),
 				),
 			)
 		}
@@ -492,7 +327,14 @@ async function build(src: Collection[], buildContext: BuildContext) {
 		promises.push(
 			maybeWrite(
 				path.join(outDir, 'index.js'),
-				names.map(name => `export * from './${toModuleName(name)}.js'`).join('\n'),
+				names
+					.map(
+						name =>
+							`	${AUTOGEN_MSG}
+						export * from './${toModuleName(name)}.js'
+						`,
+					)
+					.join('\n'),
 			),
 		)
 
@@ -669,4 +511,3 @@ export default function mdsrc(config: PluginConfig): Plugin {
 export function toModuleName(name: string) {
 	return name.toLowerCase()
 }
-

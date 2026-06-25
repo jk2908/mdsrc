@@ -19,11 +19,20 @@ export type BuildContext = {
 	names?: string[]
 }
 
+export const PRIMITIVE_NAMES = ['string', 'number', 'boolean', 'date', 'array'] as const
+
+export const MODIFIER_NAMES = ['max', 'min'] as const
+
 export namespace Schema {
-	type Primitive = 'string' | 'number' | 'boolean' | 'date' | 'object'
+	export type Primitive = 'string' | 'number' | 'boolean' | 'date' | 'array'
+
+	export type ModifierName = (typeof MODIFIER_NAMES)[number]
+
+	export type Modifier = `${ModifierName}=${string}`
 
 	export type Key = string
-	export type Value = Primitive | { [key: Key]: Value }
+
+	export type Value = Primitive | `${Primitive}|${string}` | { [key: Key]: Value }
 }
 
 export interface Schema {
@@ -54,6 +63,9 @@ export type IssueCode =
 	| 'INVALID_TYPE'
 	| 'INVALID_DATE'
 	| 'INVALID_INPUT'
+	| 'INVALID_LENGTH'
+	| 'INVALID_SIZE'
+	| 'BAD_MODIFIER'
 
 export type Issue = {
 	readonly code: IssueCode

@@ -14,14 +14,13 @@ import {
 	getFileCache,
 	maybeWrite,
 	parse,
-	parseKey,
 	schemaToType,
 	setFileCache,
 	toModuleName,
-	validate,
 } from './src/index.js'
 import { Logger } from './src/logger.js'
 import { dedent, deep } from './src/utils.js'
+import { parseKey, validate } from './src/validate.js'
 
 const TEMP_DIR = './mdsrc-tmp'
 
@@ -321,6 +320,142 @@ describe('validate', () => {
 			'INVALID_DATE',
 			'INVALID_TYPE',
 		])
+	})
+
+	it('accepts multi-type: string|number with string value', () => {
+		const { value, issues } = validate({ val: 'hello' }, { val: 'string|number' })
+		expect(issues).toBeUndefined()
+		expect(value?.val).toBe('hello')
+	})
+
+	it('accepts multi-type: string|number with number value', () => {
+		const { value, issues } = validate({ val: 42 }, { val: 'string|number' })
+		expect(issues).toBeUndefined()
+		expect(value?.val).toBe(42)
+	})
+
+	it('accepts multi-type: string|number with numeric string', () => {
+		const { value, issues } = validate({ val: '42' }, { val: 'number|string' })
+		expect(issues).toBeUndefined()
+		expect(value?.val).toBeTypeOf('number')
+	})
+
+	it('rejects multi-type when no type matches', () => {
+		const { issues } = validate({ val: false }, { val: 'string|number' })
+		expect(issues?.[0].code).toBe('INVALID_TYPE')
+		expect(issues?.[0].message).toContain('string')
+		expect(issues?.[0].message).toContain('number')
+	})
+
+	it('rejects multi-type with null', () => {
+		const { issues } = validate({ val: null }, { val: 'string|number' })
+		expect(issues?.[0].code).toBe('INVALID_TYPE')
+	})
+
+	it('applies min modifier to string', () => {
+		const { issues } = validate({ title: 'hi' }, { title: 'string|min=3' })
+		expect(issues?.[0].code).toBe('INVALID_LENGTH')
+	})
+
+	it('applies max modifier to string', () => {
+		const { issues } = validate({ title: 'hello world' }, { title: 'string|max=5' })
+		expect(issues?.[0].code).toBe('INVALID_LENGTH')
+	})
+
+	it('passes min modifier on string at boundary', () => {
+		const { value, issues } = validate({ title: 'abc' }, { title: 'string|min=3' })
+		expect(issues).toBeUndefined()
+		expect(value?.title).toBe('abc')
+	})
+
+	it('passes max modifier on string at boundary', () => {
+		const { value, issues } = validate({ title: 'abcde' }, { title: 'string|max=5' })
+		expect(issues).toBeUndefined()
+		expect(value?.title).toBe('abcde')
+	})
+
+	it('applies min modifier to number', () => {
+		const { issues } = validate({ age: 5 }, { age: 'number|min=18' })
+		expect(issues?.[0].code).toBe('INVALID_SIZE')
+	})
+
+	it('applies max modifier to number', () => {
+		const { issues } = validate({ age: 100 }, { age: 'number|max=50' })
+		expect(issues?.[0].code).toBe('INVALID_SIZE')
+	})
+
+	it('applies min modifier to date', () => {
+		const minDate = new Date('2026-01-01').getTime()
+		const { issues } = validate({ date: '2020-01-01' }, { date: `date|min=${minDate}` })
+
+		expect(issues?.[0].code).toBe('INVALID_DATE')
+	})
+
+	it('applies max modifier to date', () => {
+		const maxDate = new Date('2020-01-01').getTime()
+		const { issues } = validate({ date: '2026-01-01' }, { date: `date|max=${maxDate}` })
+
+		expect(issues?.[0].code).toBe('INVALID_DATE')
+	})
+
+	it('combines type with modifiers: string|number|min=3', () => {
+		const { value, issues } = validate({ val: 'hello' }, { val: 'string|number|min=3' })
+
+		expect(issues).toBeUndefined()
+		expect(value?.val).toBe('hello')
+	})
+
+	it('combines type with modifiers and fails: string|number|min=3', () => {
+		const { issues } = validate({ val: 'hi' }, { val: 'string|number|min=3' })
+
+		// string fails min=3, number fails NaN, falls through to INVALID_TYPE
+		expect(issues?.[0].code).toBe('INVALID_TYPE')
+	})
+
+	it('accepts array type', () => {
+		const { value, issues } = validate({ tags: ['a', 'b'] }, { tags: 'array' })
+		expect(issues).toBeUndefined()
+		expect(value?.tags).toEqual(['a', 'b'])
+	})
+
+	it('rejects non-array for array type', () => {
+		const { issues } = validate({ tags: 'not an array' }, { tags: 'array' })
+		expect(issues?.[0].code).toBe('INVALID_TYPE')
+	})
+
+	it('accepts array in multi-type', () => {
+		const { value, issues } = validate({ val: [1, 2, 3] }, { val: 'string|array' })
+		expect(issues).toBeUndefined()
+		expect(value?.val).toEqual([1, 2, 3])
+	})
+
+	it('rejects non-array in multi-type when no type matches', () => {
+		const { issues } = validate({ val: 42 }, { val: 'string|array' })
+		expect(issues?.[0].code).toBe('INVALID_TYPE')
+		expect(issues?.[0].message).toContain('string')
+		expect(issues?.[0].message).toContain('array')
+	})
+
+	it('applies min modifier to array', () => {
+		const { issues } = validate({ tags: ['a'] }, { tags: 'array|min=2' })
+		expect(issues?.[0].code).toBe('INVALID_LENGTH')
+	})
+
+	it('applies max modifier to array', () => {
+		const { issues } = validate({ tags: ['a', 'b', 'c'] }, { tags: 'array|max=2' })
+		expect(issues?.[0].code).toBe('INVALID_LENGTH')
+	})
+
+	it('passes min modifier on array at boundary', () => {
+		const { value, issues } = validate({ tags: ['a', 'b'] }, { tags: 'array|min=2' })
+		expect(issues).toBeUndefined()
+		expect(value?.tags).toEqual(['a', 'b'])
+	})
+
+	it('passes max modifier on array at boundary', () => {
+		const { value, issues } = validate({ tags: ['a', 'b'] }, { tags: 'array|max=2' })
+		expect(issues).toBeUndefined()
+		expect(value?.tags).toEqual(['a', 'b'])
 	})
 })
 
