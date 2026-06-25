@@ -19,6 +19,15 @@ export default defineConfig({
 						},
 					},
 				},
+				{
+					name: 'Projects',
+					dir: 'projects',
+					schema: {
+						name: 'string',
+						date: 'string|number',
+						'members?': 'array',
+					},
+				},
 			],
 		}),
 		react(),
