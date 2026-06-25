@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 - 2026-06-25
+
+- Added multi-type support using pipe syntax: `'string|number'`. The first matching type wins.
+- Added validation modifiers via pipe syntax: `'string|min=3|max=6'`, `'number|min=18'`, `'date|max=1735689600000'`, `'array|min=2'`.
+- Added `array` as a supported primitive type with `min`/`max` length modifiers.
+- Added `BAD_MODIFIER` issue code for unparseable modifier values.
+- Multi-type fields return a single `INVALID_TYPE` issue listing all attempted types when no type matches.
+- Fixed date modifier parsing — modifier values are now correctly converted to numbers before being passed to `new Date()`.
+- Moved validation logic into `src/validate.ts`.
+
 ## 0.4.1 - 2026-06-23
 
 - Updated README to reflect the new schema API and removed outdated markdown-it references.

@@ -36,9 +36,40 @@ The plugin reads markdown content, validates frontmatter against your schema, an
 
 ### Schema
 
-Fields are declared as `fieldName: 'type'`. Supported types: `string`, `number`, `boolean`, `date`, `object`.
+Fields are declared as `fieldName: 'type'`. Supported types: `string`, `number`, `boolean`, `date`, `array`.
 
 Optional fields use a `?` suffix: `'metadata?': { author: 'string' }`.
+
+Multiple types can be combined with `|`:
+
+```ts
+schema: {
+	val: 'string|number',
+}
+```
+
+Validation modifiers are supported:
+
+- `min`: 
+	- strings: minimum string length
+	- numbers: minimum value
+	- dates: earliest allowed date
+	- arrays: minimum array length
+
+- `max`:
+	- strings: maximum string length
+	- numbers: maximum value
+	- dates: latest allowed date
+	- arrays: maximum array length
+
+```ts
+schema: {
+	title: 'string|min=3|max=6',
+	age: 'number|min=18',
+	date: 'date|max=1735689600000',
+	tags: 'array|min=2',
+}
+```
 
 Nested objects are declared inline:
 
