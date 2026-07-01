@@ -8,6 +8,7 @@ import react, { reactCompilerPreset } from '@vitejs/plugin-react'
 export default defineConfig({
 	plugins: [
 		mdsrc({
+			compileOptions: {},
 			collections: [
 				{
 					name: 'Posts',
