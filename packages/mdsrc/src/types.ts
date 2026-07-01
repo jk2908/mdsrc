@@ -1,11 +1,14 @@
-import type { CompileOptions as SatteriCompileOptions } from 'satteri'
+import type {
+	CompileOptions as SatteriCompileOptions,
+	MdxCompileOptions as SatteriMdxCompileOptions,
+} from 'satteri'
 
 import type { LogLevel, Logger } from './logger.js'
 
-export type CompileOptions = SatteriCompileOptions
+export type CompileOptions = SatteriCompileOptions | SatteriMdxCompileOptions
 
 export type PluginConfig = {
-	collections: Collection[]
+	collections: Collection.Entry[]
 	logger?: {
 		level?: LogLevel
 	}
@@ -18,6 +21,8 @@ export type BuildContext = {
 	outDir?: string
 	names?: string[]
 }
+
+export type Manifest = Record<string, string[]>
 
 export const PRIMITIVE_NAMES = ['string', 'number', 'boolean', 'date', 'array'] as const
 
@@ -39,21 +44,45 @@ export interface Schema {
 	[key: Schema.Key]: Schema.Value
 }
 
-export type Collection = {
-	name: string
-	dir: string
-	schema: Schema
+export namespace Collection {
+	export type Entry = {
+		name: string
+		dir: string
+		schema: Schema
+	}
+
+	export type Metadata = {
+		__mdsrc: {
+			slug: string
+			filename: string
+			type: AcceptedExtension
+		}
+	}
 }
 
 export type Entries = Record<string, unknown>
 
-export type Raw = {
+export type AcceptedExtension = 'md' | 'mdx'
+
+export type MdRaw = {
 	__mdsrc: {
 		slug: string
 		filename: string
+		type: Extract<AcceptedExtension, 'md'>
 	}
-	body: string
-} & Entries
+	html: string
+}
+
+export type MdxRaw = {
+	__mdsrc: {
+		slug: string
+		filename: string
+		type: Extract<AcceptedExtension, 'mdx'>
+	}
+	code: string
+}
+
+export type Raw = MdRaw | MdxRaw
 
 export type Types = Record<string, string>
 

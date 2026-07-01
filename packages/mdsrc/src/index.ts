@@ -4,12 +4,33 @@ import path from 'node:path'
 
 import type { Plugin, ViteDevServer } from 'vite'
 
-import { markdownToHtml, type CompileOptions, type MarkdownToHtmlResult } from 'satteri'
+import {
+	markdownToHtml,
+	mdxToJs,
+	type CompileOptions,
+	type MarkdownToHtmlResult,
+} from 'satteri'
 
-import type { BuildContext, Collection, PluginConfig, Raw, Schema } from './types.js'
+import type {
+	AcceptedExtension,
+	BuildContext,
+	Collection,
+	Manifest,
+	MdxRaw,
+	PluginConfig,
+	Raw,
+	Schema,
+} from './types.js'
 import { AUTOGEN_MSG, GENERATED_DIR, PKG_NAME } from './config.js'
 import { Logger } from './logger.js'
-import { capitalise, debounce, pluralise } from './utils.js'
+import {
+	capitalise,
+	debounce,
+	isRecord,
+	pluralise,
+	singularise,
+	slugify,
+} from './utils.js'
 import { parseKey, validate } from './validate.js'
 
 export const DEFAULT_COMPILE_OPTIONS = {
@@ -18,7 +39,9 @@ export const DEFAULT_COMPILE_OPTIONS = {
 	},
 } satisfies CompileOptions
 
-export type { CompileOptions } from './types.js'
+const ACCEPTED_EXTENSIONS = ['md', 'mdx'] as const satisfies AcceptedExtension[]
+
+export type { Collection, CompileOptions } from './types.js'
 
 /**
  * Parse YAML or TOML frontmatter
@@ -50,8 +73,8 @@ export async function create(dir: string, buildContext: BuildContext) {
 	try {
 		// only pick up markdown files from this directory
 		// leave everything else alone
-		const files = (await fs.readdir(dir)).filter(
-			(file: string) => path.extname(file) === '.md',
+		const files = (await fs.readdir(dir)).filter((file: string) =>
+			ACCEPTED_EXTENSIONS.some(e => `.${e}` === path.extname(file)),
 		)
 		const filePaths = files.map(file => path.join(dir, file))
 
@@ -60,31 +83,46 @@ export async function create(dir: string, buildContext: BuildContext) {
 			return []
 		}
 
+		const parserArgs = {
+			features: {
+				...DEFAULT_COMPILE_OPTIONS.features,
+				...features,
+			},
+			...restCompileOptions,
+		}
+
 		return Promise.all(
 			filePaths.map(async filePath => {
 				const file = path.basename(filePath)
 
-				const { html, frontmatter: rawFrontmatter } = markdownToHtml(
-					await fs.readFile(filePath, 'utf-8'),
-					{
-						features: {
-							...DEFAULT_COMPILE_OPTIONS.features,
-							...features,
-						},
-						...restCompileOptions,
-					},
-				)
+				const ext = path.extname(filePath)
+				// if not markdown, must be mdx
+				const md = ext === '.md'
+				const content = await fs.readFile(filePath, 'utf-8')
 
-				const frontmatter = await parse(rawFrontmatter)
+				let res =
+					ext === '.md'
+						? markdownToHtml(content, parserArgs)
+						: mdxToJs(content, parserArgs)
 
-				return {
-					...frontmatter,
-					__mdsrc: {
-						slug: path.basename(file, '.md').toLowerCase().replace(/\s+/g, '-'),
-						filename: file,
-					},
-					body: html.trim(),
-				} satisfies Raw
+				// if any async plugins are used, `res` will be a Promise
+				if (res instanceof Promise) res = await res
+
+				const frontmatter = await parse(res.frontmatter)
+				const body = 'html' in res ? res.html : res.code
+				const slug = slugify(path.basename(file, md ? '.md' : '.mdx'))
+
+				return md
+					? {
+							...frontmatter,
+							__mdsrc: { slug, filename: file, type: 'md' as const },
+							html: body.trim(),
+						}
+					: {
+							...frontmatter,
+							__mdsrc: { slug, filename: file, type: 'mdx' as const },
+							code: body.trim(),
+						}
 			}),
 		)
 	} catch (err) {
@@ -197,7 +235,69 @@ export function schemaToType(schema: Schema) {
 	return `{ ${fields} }`
 }
 
-async function build(src: Collection[], buildContext: BuildContext) {
+export async function getManifest(outDir: string) {
+	return fs
+		.readFile(path.join(outDir, 'manifest.json'), 'utf-8')
+		.then(JSON.parse)
+		.then(manifest => {
+			if (!isRecord(manifest)) return null
+
+			const entries = Object.entries(manifest).filter(
+				(entry): entry is [string, string[]] =>
+					typeof entry[0] === 'string' &&
+					Array.isArray(entry[1]) &&
+					entry[1].every(value => typeof value === 'string'),
+			)
+
+			return Object.fromEntries(entries)
+		})
+		.catch(() => null)
+}
+
+export async function cleanup(
+	outDir: string,
+	manifest: Manifest,
+	prevManifest: Manifest | null,
+) {
+	if (!prevManifest) return false
+
+	const files = new Set(Object.values(manifest).flat())
+	const prevFiles = Object.values(prevManifest).flat()
+	const staleDirs = new Set<string>()
+
+	let cleaned = false
+
+	for (const filePath of prevFiles) {
+		// this asset still exists
+		if (files.has(filePath)) continue
+
+		await fs.rm(filePath, { force: true })
+
+		fileCache.delete(filePath)
+		staleDirs.add(path.dirname(filePath))
+
+		cleaned = true
+	}
+
+	// sort so nested dirs are removed first
+	for (const dir of [...staleDirs].toSorted((a, b) => b.length - a.length)) {
+		if (dir === outDir) continue
+
+		try {
+			if ((await fs.readdir(dir)).length) continue
+		} catch (err) {
+			if (!isENOENT(err)) throw err
+			continue
+		}
+
+		await fs.rm(dir, { recursive: true, force: true })
+		cleaned = true
+	}
+
+	return cleaned
+}
+
+async function build(src: Collection.Entry[], buildContext: BuildContext) {
 	const { logger, outDir } = buildContext
 	let names: string[] = []
 
@@ -210,12 +310,15 @@ async function build(src: Collection[], buildContext: BuildContext) {
 		}
 	> = {}
 
+	// file manifest for cleanup
+	const manifest: Record<string, string[]> = {}
+
 	try {
 		if (!outDir) throw new Error('Output directory is not defined')
 
 		// make sure the output directory exists before the writes begin
-		// that way the emit step can stay simple
 		await fs.mkdir(outDir, { recursive: true })
+		const prevManifest = await getManifest(outDir)
 
 		// read and validate every collection before writing anything out
 		// this keeps the js and dts outputs in step
@@ -224,17 +327,15 @@ async function build(src: Collection[], buildContext: BuildContext) {
 
 			// check each raw item before it makes it into the generated collection
 			// bad entries get logged and dropped
-			const validated = raw.map(item => {
-				const { body, __mdsrc, ...metadata } = item
+			const validated: Raw[] = raw.map(item => {
+				const { html, code, __mdsrc, ...metadata } = item
 				const res = validate(metadata, collection.schema)
 
 				if (res.issues) throw new Error(JSON.stringify(res.issues, null, 2))
 
-				return {
-					...res.value,
-					body,
-					__mdsrc,
-				}
+				return __mdsrc.type === 'md'
+					? { ...res.value, __mdsrc, html }
+					: { ...res.value, __mdsrc, code }
 			})
 
 			collections[collection.name] = {
@@ -243,6 +344,8 @@ async function build(src: Collection[], buildContext: BuildContext) {
 				items: validated,
 				schema: collection.schema,
 			}
+
+			manifest[collection.name] = []
 		}
 
 		// take the collection names after validation has settled
@@ -258,19 +361,16 @@ async function build(src: Collection[], buildContext: BuildContext) {
 			maybeWrite(
 				path.join(outDir, 'types.ts'),
 				` ${AUTOGEN_MSG}
+
+					import type { Collection } from '${PKG_NAME}'
 				
 					${names
 						.map(
 							name => `
-								${AUTOGEN_MSG}
-
-								export type ${capitalise(name)} = ${schemaToType(collections[name].schema)} & {
-									body: string,
-									__mdsrc: {
-										slug: string
-										filename: string
-									},
-								}
+								export type ${capitalise(singularise(name))} = ${schemaToType(collections[name].schema)} & {
+									html?: string,
+									Component?: any,
+								} & Collection.Metadata
 							`,
 						)
 						.join('\n\n')}`.trim(),
@@ -284,12 +384,12 @@ async function build(src: Collection[], buildContext: BuildContext) {
 				path.join(outDir, 'index.d.ts'),
 				`	${AUTOGEN_MSG}
 
-					import type { ${names.map(name => capitalise(name)).join(', ')} } from './types.js'
+					import type { ${names.map(name => capitalise(singularise(name))).join(', ')} } from './types.js'
 
 					${names
 						.map(
 							name => `
-								export const all${capitalise(pluralise(name, 2))}: ${capitalise(name)}[]
+								export const all${capitalise(pluralise(name, 2))}: ${capitalise(singularise(name))}[]
 							`,
 						)
 						.join('\n\n')}
@@ -298,7 +398,7 @@ async function build(src: Collection[], buildContext: BuildContext) {
 						${names
 							.map(
 								name => `
-									export const all${capitalise(pluralise(name, 2))}: ${capitalise(name)}[]
+									export const all${capitalise(pluralise(name, 2))}: ${capitalise(singularise(name))}[]
 								`,
 							)
 							.join('\n\n')}
@@ -309,15 +409,54 @@ async function build(src: Collection[], buildContext: BuildContext) {
 
 		// serialise each validated collection as a plain module for Vite to load
 		for (const name of names) {
-			const collection = collections[name]?.items
+			const collection = collections[name]?.items ?? []
+
 			const fileName = toModuleName(name)
+			const filePath = `${fileName}.js`
+
+			const imports: string[] = []
+			const entries: string[] = []
+
+			if (collection.some(isMdx)) {
+				await fs.mkdir(path.join(outDir, fileName), { recursive: true })
+			}
+
+			for (let i = 0; i < collection.length; i++) {
+				const item = collection[i]
+
+				if (isMdx(item)) {
+					const slug = item.__mdsrc.slug
+
+					// fileName (collection name) is used as dir name
+					const fullPath = path.join(outDir, fileName, `${slug}.js`)
+
+					manifest[name].push(fullPath)
+					promises.push(maybeWrite(fullPath, item.code))
+
+					const importName = `C${i}`
+					imports.push(`import ${importName} from './${fileName}/${slug}.js'`)
+
+					// oxlint-disable-next-line no-unused-vars
+					const { code, ...rest } = item
+					entries.push(`{ ...${JSON.stringify(rest)}, Component: ${importName} }`)
+				} else {
+					entries.push(JSON.stringify(item))
+				}
+			}
+
+			const fullPath = path.join(outDir, filePath)
+
+			// add to manifest
+			manifest[name].push(fullPath)
 
 			promises.push(
 				maybeWrite(
-					path.join(outDir, `${fileName}.js`),
+					fullPath,
 					`	${AUTOGEN_MSG}
 		
-						export const all${capitalise(pluralise(name, 2))} = ${collection?.length ? JSON.stringify(collection) : '[]'}`.trim(),
+						${imports.join('\n')}
+
+						export const all${capitalise(pluralise(name, 2))} = [${entries.join(',\n')}]`.trim(),
 				),
 			)
 		}
@@ -327,23 +466,31 @@ async function build(src: Collection[], buildContext: BuildContext) {
 		promises.push(
 			maybeWrite(
 				path.join(outDir, 'index.js'),
-				names
-					.map(
-						name =>
-							`	${AUTOGEN_MSG}
-						export * from './${toModuleName(name)}.js'
-						`,
-					)
-					.join('\n'),
+				`${AUTOGEN_MSG}
+				
+					${names
+						.map(
+							name =>
+								`
+								export * from './${toModuleName(name)}.js'
+							`,
+						)
+						.join('\n')}`,
 			),
+		)
+
+		promises.push(
+			maybeWrite(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2)),
 		)
 
 		// flush every generated artifact once all the content is ready
 		// let any failed write fail the build
 		const writes = await Promise.all(promises)
+		const cleaned = await cleanup(outDir, manifest, prevManifest)
+
 		buildContext.names = names
 
-		return writes.some(changed => changed)
+		return writes.some(c => c) || cleaned
 	} catch (err) {
 		logger.error('[build]: failed to generate data', err)
 		throw err
@@ -510,4 +657,8 @@ export default function mdsrc(config: PluginConfig): Plugin {
 
 export function toModuleName(name: string) {
 	return name.toLowerCase()
+}
+
+function isMdx(item: Raw): item is MdxRaw {
+	return item.__mdsrc.type === 'mdx'
 }

@@ -7,11 +7,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { BuildContext, Entries, Schema } from './src/types.js'
 import {
+	cleanup,
 	create,
 	DEFAULT_COMPILE_OPTIONS,
 	FILE_CACHE_MAX_SIZE,
 	fileCache,
 	getFileCache,
+	getManifest,
 	maybeWrite,
 	parse,
 	schemaToType,
@@ -43,8 +45,9 @@ const ENTRY = {
 	__mdsrc: {
 		slug: 'test',
 		filename: 'test.md',
+		type: 'md' as const,
 	},
-	body: '<p>Bodyyy</p>',
+	html: '<p>Bodyyy</p>',
 }
 
 describe('markdown parsing', () => {
@@ -122,6 +125,23 @@ describe('create', () => {
 		expect(created).toEqual(ENTRY)
 	})
 
+	it('creates an mdx entry with code', async () => {
+		const mdx = dedent(`
+			---
+			title: mdsrc
+			draft: false
+			---
+			Bodyyy`)
+
+		await fs.writeFile(path.join(TEMP_DIR, 'test.mdx'), mdx)
+
+		const [created] = await create(TEMP_DIR, buildContext)
+		expect(created.__mdsrc.type).toBe('mdx')
+		expect(created.__mdsrc.filename).toBe('test.mdx')
+		expect(created.html).toBeUndefined()
+		expect(created.code).toBeTypeOf('string')
+	})
+
 	it('ignores non markdown inputs', async () => {
 		await fs.writeFile(path.join(TEMP_DIR, BAD_PATH), md)
 
@@ -152,7 +172,7 @@ describe('validate', () => {
 
 	it('accepts input without optional key', () => {
 		// oxlint-disable-next-line no-unused-vars
-		const { __mdsrc, body, metadata, ...rest } = ENTRY
+		const { __mdsrc, html, metadata, ...rest } = ENTRY
 		const { value, issues } = validate(rest, SCHEMA)
 
 		const date = new Date(rest.date).toISOString()
@@ -183,7 +203,7 @@ describe('validate', () => {
 
 	it('allows optional keys in input', () => {
 		// oxlint-disable-next-line no-unused-vars
-		const { body, __mdsrc, ...rest } = ENTRY
+		const { html, __mdsrc, ...rest } = ENTRY
 		const { value, issues } = validate(rest, SCHEMA)
 
 		const date = new Date(rest.date).toISOString()
@@ -580,5 +600,49 @@ describe('fileCache', () => {
 
 		expect(fileCache.has('file0.txt')).toBe(true)
 		expect(fileCache.has('file1.txt')).toBe(false)
+	})
+})
+
+describe('manifest', () => {
+	const outDir = path.join(TEMP_DIR, '.mdsrc')
+	const manifestPath = path.join(outDir, 'manifest.json')
+	const staleDir = path.join(outDir, 'posts')
+	const staleOutput = path.join(staleDir, 'hello.js')
+
+	beforeEach(async () => {
+		await fs.mkdir(outDir, { recursive: true })
+		fileCache.clear()
+	})
+
+	afterEach(async () => {
+		await fs.rm(TEMP_DIR, { recursive: true, force: true })
+	})
+
+	it('reads a written manifest', async () => {
+		const manifest = {
+			Posts: [path.join(outDir, 'posts.js')],
+		}
+
+		await fs.writeFile(manifestPath, JSON.stringify(manifest))
+		expect(await getManifest(outDir)).toEqual(manifest)
+	})
+
+	it('prunes stale generated assets and empty directories', async () => {
+		const nextManifest = {
+			Posts: [path.join(outDir, 'posts.js')],
+		}
+		const prevManifest = {
+			Posts: [staleOutput, ...nextManifest.Posts],
+		}
+
+		await fs.mkdir(staleDir, { recursive: true })
+		await fs.writeFile(staleOutput, 'export default {}')
+		setFileCache(staleOutput, 'export default {}')
+
+		expect(await cleanup(outDir, nextManifest, prevManifest)).toBe(true)
+
+		await expect(fs.stat(staleOutput)).rejects.toMatchObject({ code: 'ENOENT' })
+		await expect(fs.stat(staleDir)).rejects.toMatchObject({ code: 'ENOENT' })
+		expect(fileCache.has(staleOutput)).toBe(false)
 	})
 })
