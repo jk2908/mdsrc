@@ -3,3 +3,4 @@ dist
 local
 examples/**/.mdsrc
 examples/**/dist
+RELEASE.md

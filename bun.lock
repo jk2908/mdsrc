@@ -46,7 +46,7 @@
     },
     "packages/mdsrc": {
       "name": "@jk2908/mdsrc",
-      "version": "0.3.0",
+      "version": "0.5.0",
       "dependencies": {
         "satteri": "^0.8.1",
         "smol-toml": "^1.6.1",
