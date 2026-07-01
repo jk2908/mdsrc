@@ -32,7 +32,7 @@ export default defineConfig({
 })
 ```
 
-The plugin reads markdown content, validates frontmatter against your schema, and generates typed modules during build and watch. Root config uses `collections`, optional `compileOptions`, and `logger`. Collection config uses `name`, `dir`, and `schema`.
+The plugin reads markdown and MDX content, validates frontmatter against your schema, and generates typed modules during build and watch. Root config uses `collections`, optional `compileOptions`, and `logger`. Collection config uses `name`, `dir`, and `schema`.
 
 ### Schema
 
@@ -107,7 +107,7 @@ See [satteri](https://satteri.bruits.org/) for the full list of compile options 
 
 ### Output
 
-Each entry exports a `body` field containing the rendered HTML.
+Each entry exports a `html` field containing the rendered HTML for markdown files, or a `Component` field for MDX files.
 
 If you configure a collection with `name: 'post'`, `mdsrc` exposes `allPosts` from the package root.
 
@@ -117,8 +117,27 @@ import { allPosts } from '@jk2908/mdsrc'
 export const summaries = allPosts.map(post => ({
 	title: post.title,
 	slug: post.__mdsrc.slug,
-	body: post.body,
+	html: post.html,
 }))
+```
+
+#### Using MDX Components
+
+For `.mdx` files, the generated entry includes a `Component` that you can render in your application. You can also pass custom components to it.
+
+For example, to render a post and provide a custom `h1` component:
+
+```tsx
+import { allPosts } from '@jk2908/mdsrc'
+
+const post = allPosts.find(p => p.__mdsrc.slug === 'my-first-post')
+const H1 = ({ children }) => <h1 style={{ color: 'red' }}>{children}</h1>
+
+export function Post() {
+	if (!post || !post.Component) return <div>Not found</div>
+
+	return <post.Component components={{ h1: H1 }} />
+}
 ```
 
 If you want the generated collection module directly, you can also import the collection subpath.

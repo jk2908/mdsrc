@@ -1,13 +1,22 @@
 # Changelog
 
+## 0.6.0 - 2026-07-01
+
+- For Markdown files, non-frontmatter content is now available on the `html` field, replacing `body`.
+- Added support for `.mdx` files. MDX entries now generate a `Component` field instead of `html`.
+- Added cleanup to remove stale generated files and empty directories when source files are removed or renamed.
+- Improved pluralisation for generated collection names and types.
+
 ## 0.5.0 - 2026-06-25
 
 - Added multi-type support using pipe syntax: `'string|number'`. The first matching type wins.
 - Added validation modifiers via pipe syntax: `'string|min=3|max=6'`, `'number|min=18'`, `'date|max=1735689600000'`, `'array|min=2'`.
 - Added `array` as a supported primitive type with `min`/`max` length modifiers.
 - Added `BAD_MODIFIER` issue code for unparseable modifier values.
+- Added `INVALID_LENGTH` issue code for string and array length constraint failures.
+- Added `INVALID_SIZE` issue code for number value constraint failures.
+- Single-type fields now return specific issue codes (e.g. `INVALID_DATE` for invalid dates, `INVALID_TYPE` for wrong type) instead of a generic message.
 - Multi-type fields return a single `INVALID_TYPE` issue listing all attempted types when no type matches.
-- Fixed date modifier parsing — modifier values are now correctly converted to numbers before being passed to `new Date()`.
 - Moved validation logic into `src/validate.ts`.
 
 ## 0.4.1 - 2026-06-23
