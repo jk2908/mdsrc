@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 - 2026-07-01
+
+- Generated MDX `Component` types now follow `compileOptions.jsxImportSource`, emitting React, Preact, or Solid component signatures instead of `any`.
+
 ## 0.6.0 - 2026-07-01
 
 - For Markdown files, non-frontmatter content is now available on the `html` field, replacing `body`.

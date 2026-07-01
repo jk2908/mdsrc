@@ -351,6 +351,11 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 		// take the collection names after validation has settled
 		// every generated file then works from the same list
 		names = Object.keys(collections)
+
+		const componentTypeDef = names.some(name => collections[name]?.items.some(isMdx))
+			? getComponentTypeDef(buildContext.compileOptions)
+			: null
+
 		// queue the file writes first so the emit phase can run together
 		// wait for them once every output is ready
 		const promises = []
@@ -363,13 +368,16 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 				` ${AUTOGEN_MSG}
 
 					import type { Collection } from '${PKG_NAME}'
+					${componentTypeDef ? `\n\t\t\t\t\t${componentTypeDef.import}` : ''}
+
+					${componentTypeDef ? `\n\t\t\t\t\ttype Component = ${componentTypeDef.type}\n` : ''}
 				
 					${names
 						.map(
 							name => `
 								export type ${capitalise(singularise(name))} = ${schemaToType(collections[name].schema)} & {
 									html?: string,
-									Component?: any,
+									Component?: ${componentTypeDef ? 'Component' : 'unknown'},
 								} & Collection.Metadata
 							`,
 						)
@@ -657,6 +665,48 @@ export default function mdsrc(config: PluginConfig): Plugin {
 
 export function toModuleName(name: string) {
 	return name.toLowerCase()
+}
+
+function getComponentTypeDef(compileOptions?: CompileOptions) {
+	const importSource = getJsxImportSource(compileOptions)
+
+	switch (importSource) {
+		case 'preact': {
+			return {
+				import: `import type { ComponentType } from 'preact'`,
+				type: `ComponentType<{ components?: Record<string, ComponentType<any>> }>`,
+			}
+		}
+		case 'solid-js': {
+			return {
+				import: `import type { Component } from 'solid-js'`,
+				type: `Component<{ components?: Record<string, Component<any>> }>`,
+			}
+		}
+		case 'react':
+		default: {
+			return {
+				import: `import type { ComponentType } from 'react'`,
+				type: `ComponentType<{ components?: Record<string, ComponentType<any>> }>`,
+			}
+		}
+	}
+}
+
+/**
+ * @see https://satteri.bruits.org/docs/options/
+ */
+function getJsxImportSource(compileOptions?: CompileOptions) {
+	if (!compileOptions) return 'react'
+
+	if (
+		'jsxImportSource' in compileOptions &&
+		typeof compileOptions.jsxImportSource === 'string'
+	) {
+		return compileOptions.jsxImportSource
+	}
+
+	return 'react'
 }
 
 function isMdx(item: Raw): item is MdxRaw {
