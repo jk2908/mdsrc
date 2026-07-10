@@ -148,6 +148,8 @@ import { allPosts } from '@jk2908/mdsrc/post'
 
 The generated files live in `./.mdsrc` on disk, so you can import them directly via paths like `./.mdsrc/index.js`, but `.mdsrc` itself is not a module ID the plugin resolves. The stable import IDs are `@jk2908/mdsrc` and `@jk2908/mdsrc/<collection>`.
 
+Because `.mdsrc` is generated, it is recommended to add `.mdsrc` to your `.gitignore`.
+
 ## License
 
 MIT

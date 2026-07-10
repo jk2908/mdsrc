@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0 - 2026-07-10
+
+- Documented that the generated `.mdsrc` directory should usually be added to `.gitignore`.
+
 ## 0.6.1 - 2026-07-01
 
 - Generated MDX `Component` types now follow `compileOptions.jsxImportSource`, emitting React, Preact, or Solid component signatures instead of `any`.

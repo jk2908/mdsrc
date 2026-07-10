@@ -140,10 +140,7 @@ export function isENOENT(err: unknown) {
 
 /**
  * LRU cache for file content. Stores the last written content per file path
- * so `maybeWrite` can skip disk I/O when nothing has changed.
- *
- * Uses Map insertion order to track recency: the front of the map holds the
- * least recently used entries, which are evicted first when the cache is full.
+ * so `maybeWrite` can skip disk I/O when nothing has changed
  */
 export const fileCache = new Map<string, string>()
 
@@ -156,14 +153,12 @@ export const FILE_CACHE_MAX_SIZE = 100
  * entry (front) before inserting
  */
 export function setFileCache(filePath: string, content: string) {
+	// drop any existing entry
 	fileCache.delete(filePath)
 
 	if (fileCache.size >= FILE_CACHE_MAX_SIZE) {
 		const lru = fileCache.keys().next().value
-
-		if (lru !== undefined) {
-			fileCache.delete(lru)
-		}
+		if (lru !== undefined) fileCache.delete(lru)
 	}
 
 	fileCache.set(filePath, content)
@@ -175,10 +170,7 @@ export function setFileCache(filePath: string, content: string) {
  */
 export function getFileCache(filePath: string) {
 	const content = fileCache.get(filePath)
-
-	if (content !== undefined) {
-		setFileCache(filePath, content)
-	}
+	if (content !== undefined) setFileCache(filePath, content)
 
 	return content
 }
@@ -566,7 +558,7 @@ export default function mdsrc(config: PluginConfig): Plugin {
 	let rebuildQueued = false
 	let rebuildReason = 'change'
 
-	const rebuild = debounce((event: string, filePath: string) => {
+	const rebuild = debounce((event: 'add' | 'change' | 'unlink', filePath: string) => {
 		function queue() {
 			void (async () => {
 				// collapse bursts of file events into one active rebuild plus a single

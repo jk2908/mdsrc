@@ -37,9 +37,5 @@
   "workspaces": [
     "packages/*",
     "examples/*"
-  ],
-  "dependencies": {
-    "arktype": "^2.2.1",
-    "zod": "^4.4.3"
-  }
+  ]
 }
