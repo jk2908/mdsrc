@@ -1,6 +1,6 @@
 {
   "name": "@jk2908/mdsrc",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "author": "Jerome Kenway",
   "description": "A Vite plugin for turning structured Markdown content into importable, type-safe modules",
@@ -10,6 +10,9 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "rm -rf dist && tsgo && bun run ./build.ts",
     "test": "bunx vitest"
@@ -26,9 +29,6 @@
   },
   "peerDependencies": {
     "vite": "^4.0.0 || ^5.0.0 || ^6.0.0 || ^7.0.0 || ^8.0.0"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "exports": {
     ".": {

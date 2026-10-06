@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0 - 2026-10-06
+
+- Added an optional `ignorePattern` to collection config. Accepts a `RegExp` or a `(file: string) => boolean` predicate; matching files are skipped during generation.
+
+## 0.7.1 - 2026-07-22
+
+- Tidied CI workflow
+
 ## 0.7.0 - 2026-07-10
 
 - Documented that the generated `.mdsrc` directory should usually be added to `.gitignore`.
