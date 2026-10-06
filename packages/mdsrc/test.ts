@@ -156,6 +156,35 @@ describe('create', () => {
 		expect(result).toEqual([])
 	})
 
+	it('ignores markdown files matching a regex ignorePattern', async () => {
+		await fs.writeFile(path.join(TEMP_DIR, 'post.md'), md)
+		await fs.writeFile(path.join(TEMP_DIR, 'draft-post.md'), md)
+
+		const created = await create(TEMP_DIR, buildContext, /draft/)
+
+		expect(created).toHaveLength(1)
+		expect(created[0].__mdsrc.filename).toBe('post.md')
+	})
+
+	it('ignores markdown files matching a function ignorePattern', async () => {
+		await fs.writeFile(path.join(TEMP_DIR, 'post.md'), md)
+		await fs.writeFile(path.join(TEMP_DIR, '_draft.md'), md)
+
+		const created = await create(TEMP_DIR, buildContext, file => file.startsWith('_'))
+
+		expect(created).toHaveLength(1)
+		expect(created[0].__mdsrc.filename).toBe('post.md')
+	})
+
+	it('keeps all markdown files when ignorePattern matches nothing', async () => {
+		await fs.writeFile(path.join(TEMP_DIR, 'post.md'), md)
+		await fs.writeFile(path.join(TEMP_DIR, 'draft-post.md'), md)
+
+		const created = await create(TEMP_DIR, buildContext, /nope/)
+
+		expect(created).toHaveLength(2)
+	})
+
 	it('throws when directory does not exist', async () => {
 		await expect(create('./nonexistent-dir', buildContext)).rejects.toThrow()
 	})

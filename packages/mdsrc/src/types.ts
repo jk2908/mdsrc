@@ -48,6 +48,7 @@ export namespace Collection {
 	export type Entry = {
 		name: string
 		dir: string
+		ignorePattern?: IgnorePattern
 		schema: Schema
 	}
 
@@ -63,6 +64,8 @@ export namespace Collection {
 export type Entries = Record<string, unknown>
 
 export type AcceptedExtension = 'md' | 'mdx'
+
+export type IgnorePattern = RegExp | ((file: string) => boolean)
 
 export type MdRaw = {
 	__mdsrc: {

@@ -32,7 +32,7 @@ export default defineConfig({
 })
 ```
 
-The plugin reads markdown and MDX content, validates frontmatter against your schema, and generates typed modules during build and watch. Root config uses `collections`, optional `compileOptions`, and `logger`. Collection config uses `name`, `dir`, and `schema`.
+The plugin reads markdown and MDX content, validates frontmatter against your schema, and generates typed modules during build and watch. Root config uses `collections`, optional `compileOptions`, and `logger`. Collection config uses `name`, `dir`, `schema`, and an optional `ignorePattern`.
 
 ### Schema
 
@@ -81,6 +81,27 @@ schema: {
 		publishedAt: 'date',
 	},
 }
+```
+
+### Ignoring Files
+
+Pass an optional `ignorePattern` to skip files within a collection. It can be a `RegExp` or a `(file: string) => boolean` predicate; any markdown or MDX file it matches is left out of the generated output.
+
+```ts
+plugin({
+	collections: [
+		{
+			dir: 'content',
+			name: 'post',
+			schema: { title: 'string' },
+			ignorePattern: /^draft-/, // skip files starting with "draft-"
+		},
+	],
+})
+```
+
+```ts
+ignorePattern: (file) => file.startsWith('_'), // skip underscore-prefixed files
 ```
 
 ### Compile Options

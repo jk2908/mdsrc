@@ -15,6 +15,7 @@ import type {
 	AcceptedExtension,
 	BuildContext,
 	Collection,
+	IgnorePattern,
 	Manifest,
 	MdxRaw,
 	PluginConfig,
@@ -64,9 +65,13 @@ export async function parse(frontmatter: MarkdownToHtmlResult['frontmatter']) {
 /**
  * Read every markdown file in a collection and turn it into the raw entry shape
  * add mdsrc metadata like slug and filename alongside the trimmed body
- * return an empty list if the directory read fails
+ * return an empty list if the directory read fails.
  */
-export async function create(dir: string, buildContext: BuildContext) {
+export async function create(
+	dir: string,
+	buildContext: BuildContext,
+	ignorePattern?: IgnorePattern,
+) {
 	const { logger, compileOptions = {} } = buildContext
 	const { features, ...restCompileOptions } = compileOptions
 
@@ -74,7 +79,7 @@ export async function create(dir: string, buildContext: BuildContext) {
 		// only pick up markdown files from this directory
 		// leave everything else alone
 		const files = (await fs.readdir(dir)).filter((file: string) =>
-			ACCEPTED_EXTENSIONS.some(e => `.${e}` === path.extname(file)),
+			isFileValid(file, ignorePattern),
 		)
 		const filePaths = files.map(file => path.join(dir, file))
 
@@ -132,7 +137,21 @@ export async function create(dir: string, buildContext: BuildContext) {
 }
 
 /**
- * Returns whether the error was caused by a missing file or directory
+ * Returns whether a file qualifies for parsing. The file must have an accepted
+ * extension and must not match the collection's `ignorePattern`.
+ */
+function isFileValid(file: string, ignorePattern?: IgnorePattern) {
+	if (!ACCEPTED_EXTENSIONS.some(e => `.${e}` === path.extname(file))) return false
+	if (!ignorePattern) return true
+
+	const ignored =
+		typeof ignorePattern === 'function' ? ignorePattern(file) : ignorePattern.test(file)
+
+	return !ignored
+}
+
+/**
+ * Returns whether the error was caused by a missing file or directory.
  */
 export function isENOENT(err: unknown) {
 	return err instanceof Error && 'code' in err && err.code === 'ENOENT'
@@ -140,7 +159,7 @@ export function isENOENT(err: unknown) {
 
 /**
  * LRU cache for file content. Stores the last written content per file path
- * so `maybeWrite` can skip disk I/O when nothing has changed
+ * so `maybeWrite` can skip disk I/O when nothing has changed.
  */
 export const fileCache = new Map<string, string>()
 
@@ -150,7 +169,7 @@ export const FILE_CACHE_MAX_SIZE = 100
  * Promote an existing cache entry to most-recently-used by deleting and
  * re-inserting it, which moves it to the end of the Map's iteration
  * order. If the cache is at capacity, evict the least recently used
- * entry (front) before inserting
+ * entry (front) before inserting.
  */
 export function setFileCache(filePath: string, content: string) {
 	// drop any existing entry
@@ -166,7 +185,7 @@ export function setFileCache(filePath: string, content: string) {
 
 /**
  * Retrieve a cached value and promote it to most-recently-used so it won't
- * be evicted while still actively referenced
+ * be evicted while still actively referenced.
  */
 export function getFileCache(filePath: string) {
 	const content = fileCache.get(filePath)
@@ -176,7 +195,7 @@ export function getFileCache(filePath: string) {
 }
 
 /**
- * Write a file only if the content has changed since the last build
+ * Write a file only if the content has changed since the last build.
  */
 export async function maybeWrite(filePath: string, content: string) {
 	const cached = getFileCache(filePath)
@@ -315,7 +334,11 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 		// read and validate every collection before writing anything out
 		// this keeps the js and dts outputs in step
 		for (const collection of src) {
-			const raw = await create(path.join(process.cwd(), collection.dir), buildContext)
+			const raw = await create(
+				path.join(process.cwd(), collection.dir),
+				buildContext,
+				collection.ignorePattern,
+			)
 
 			// check each raw item before it makes it into the generated collection
 			// bad entries get logged and dropped
@@ -498,7 +521,7 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 }
 
 /**
- * Convert watcher paths to a consistent slash format before comparing them
+ * Convert watcher paths to a consistent slash format before comparing them.
  */
 function normaliseWatchPath(p: string) {
 	return p.replace(/\\/g, '/')
@@ -507,7 +530,7 @@ function normaliseWatchPath(p: string) {
 /**
  * Build the Vite plugin that validates collections and writes the generated modules
  * keep the runtime data and declaration files in the same pass
- * resolve package imports from the generated directory
+ * resolve package imports from the generated directory.
  */
 export default function mdsrc(config: PluginConfig): Plugin {
 	const src = config.collections
