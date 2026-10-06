@@ -62,6 +62,18 @@ export async function parse(frontmatter: MarkdownToHtmlResult['frontmatter']) {
 	}
 }
 
+export type CachedEntry = {
+	mtimeMs: number
+	size: number
+	entry: Raw
+}
+
+/**
+ * Cache the parsed result of each source file keyed by absolute path. A rebuild
+ * only re-parses files whose `mtime` or size has changed.
+ */
+export const entryCache = new Map<string, CachedEntry>()
+
 /**
  * Read every markdown file in a collection and turn it into the raw entry shape
  * add mdsrc metadata like slug and filename alongside the trimmed body
@@ -83,6 +95,14 @@ export async function create(
 		)
 		const filePaths = files.map(file => path.join(dir, file))
 
+		// drop cached parses for files that no longer live in this directory
+		const normalisedDir = path.normalize(dir)
+		const live = new Set(filePaths)
+
+		for (const key of entryCache.keys()) {
+			if (path.dirname(key) === normalisedDir && !live.has(key)) entryCache.delete(key)
+		}
+
 		if (!files.length) {
 			logger.warn(`mdsrc: ${dir} is empty`)
 			return []
@@ -98,9 +118,18 @@ export async function create(
 
 		return Promise.all(
 			filePaths.map(async filePath => {
-				const file = path.basename(filePath)
+				// `stat` is far cheaper than a read plus a full compile, so a
+				// matching mtime and size lets us reuse the previous parse
+				const { mtimeMs, size } = await fs.stat(filePath)
+				const cached = entryCache.get(filePath)
 
+				if (cached && cached.mtimeMs === mtimeMs && cached.size === size) {
+					return cached.entry
+				}
+
+				const file = path.basename(filePath)
 				const ext = path.extname(filePath)
+
 				// if not markdown, must be mdx
 				const md = ext === '.md'
 				const content = await fs.readFile(filePath, 'utf-8')
@@ -117,7 +146,7 @@ export async function create(
 				const body = 'html' in res ? res.html : res.code
 				const slug = slugify(path.basename(file, md ? '.md' : '.mdx'))
 
-				return md
+				const entry = md
 					? {
 							...frontmatter,
 							__mdsrc: { slug, filename: file, type: 'md' as const },
@@ -128,6 +157,10 @@ export async function create(
 							__mdsrc: { slug, filename: file, type: 'mdx' as const },
 							code: body.trim(),
 						}
+
+				entryCache.set(filePath, { mtimeMs, size, entry })
+
+				return entry
 			}),
 		)
 	} catch (err) {
@@ -333,34 +366,38 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 
 		// read and validate every collection before writing anything out
 		// this keeps the js and dts outputs in step
-		for (const collection of src) {
-			const raw = await create(
-				path.join(process.cwd(), collection.dir),
-				buildContext,
-				collection.ignorePattern,
-			)
+		// collections are independent, so read and parse them concurrently
+		const results = await Promise.all(
+			src.map(async collection => {
+				const raw = await create(
+					path.join(process.cwd(), collection.dir),
+					buildContext,
+					collection.ignorePattern,
+				)
 
-			// check each raw item before it makes it into the generated collection
-			// bad entries get logged and dropped
-			const validated: Raw[] = raw.map(item => {
-				const { html, code, __mdsrc, ...metadata } = item
-				const res = validate(metadata, collection.schema)
+				// check each raw item before it makes it into the generated collection
+				// bad entries get logged and dropped
+				const validated: Raw[] = raw.map(item => {
+					const { html, code, __mdsrc, ...metadata } = item
+					const res = validate(metadata, collection.schema)
 
-				if (res.issues) throw new Error(JSON.stringify(res.issues, null, 2))
+					if (res.issues) throw new Error(JSON.stringify(res.issues, null, 2))
 
-				return __mdsrc.type === 'md'
-					? { ...res.value, __mdsrc, html }
-					: { ...res.value, __mdsrc, code }
-			})
+					return __mdsrc.type === 'md'
+						? { ...res.value, __mdsrc, html }
+						: { ...res.value, __mdsrc, code }
+				})
 
-			collections[collection.name] = {
-				// keep the cleaned items with the schema they came from
-				// both js and dts generation read from this shape
-				items: validated,
-				schema: collection.schema,
-			}
+				return { name: collection.name, schema: collection.schema, items: validated }
+			}),
+		)
 
-			manifest[collection.name] = []
+		// populate in config order so generated output stays deterministic
+		for (const { name, schema, items } of results) {
+			// keep the cleaned items with the schema they came from
+			// both js and dts generation read from this shape
+			collections[name] = { items, schema }
+			manifest[name] = []
 		}
 
 		// take the collection names after validation has settled
@@ -534,6 +571,10 @@ function normaliseWatchPath(p: string) {
  */
 export default function mdsrc(config: PluginConfig): Plugin {
 	const src = config.collections
+
+	// a fresh plugin instance means a fresh config, so drop parses that may
+	// have been produced with different compile options
+	entryCache.clear()
 
 	// use one logger for the whole build so every step reports the same way
 	// stay chatty outside production

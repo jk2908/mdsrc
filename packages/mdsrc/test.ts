@@ -10,6 +10,7 @@ import {
 	cleanup,
 	create,
 	DEFAULT_COMPILE_OPTIONS,
+	entryCache,
 	FILE_CACHE_MAX_SIZE,
 	fileCache,
 	getFileCache,
@@ -109,6 +110,7 @@ describe('create', () => {
 
 	beforeEach(async () => {
 		await fs.mkdir(TEMP_DIR, { recursive: true })
+		entryCache.clear()
 	})
 
 	afterEach(async () => {
@@ -183,6 +185,59 @@ describe('create', () => {
 		const created = await create(TEMP_DIR, buildContext, /nope/)
 
 		expect(created).toHaveLength(2)
+	})
+
+	it('reuses the cached parse for an unchanged file', async () => {
+		await fs.writeFile(path.join(TEMP_DIR, GOOD_PATH), md)
+
+		const [first] = await create(TEMP_DIR, buildContext)
+		const [second] = await create(TEMP_DIR, buildContext)
+
+		expect(second).toBe(first)
+	})
+
+	it('re-parses when the file size changes', async () => {
+		const file = path.join(TEMP_DIR, GOOD_PATH)
+
+		await fs.writeFile(file, 'aaa')
+		const [first] = await create(TEMP_DIR, buildContext)
+
+		await fs.writeFile(file, 'bbbb')
+		const [second] = await create(TEMP_DIR, buildContext)
+
+		expect(second).not.toBe(first)
+	})
+
+	it('re-parses when the file is rewritten with the same size but newer mtime', async () => {
+		const file = path.join(TEMP_DIR, GOOD_PATH)
+
+		await fs.writeFile(file, 'aaa')
+		const [first] = await create(TEMP_DIR, buildContext)
+
+		await fs.writeFile(file, 'bbb')
+		const future = new Date(Date.now() + 10_000)
+		await fs.utimes(file, future, future)
+		const [second] = await create(TEMP_DIR, buildContext)
+
+		expect(second).not.toBe(first)
+		expect(second.html).toContain('bbb')
+	})
+
+	it('drops cached entries for files removed from the directory', async () => {
+		const keptPath = path.join(TEMP_DIR, 'post.md')
+		const removedPath = path.join(TEMP_DIR, 'draft-post.md')
+
+		await fs.writeFile(keptPath, md)
+		await fs.writeFile(removedPath, md)
+
+		await create(TEMP_DIR, buildContext)
+		expect(entryCache.has(removedPath)).toBe(true)
+
+		await fs.unlink(removedPath)
+		const created = await create(TEMP_DIR, buildContext)
+
+		expect(created).toHaveLength(1)
+		expect(entryCache.has(removedPath)).toBe(false)
 	})
 
 	it('throws when directory does not exist', async () => {

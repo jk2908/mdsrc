@@ -14,6 +14,7 @@
     "access": "public"
   },
   "scripts": {
+    "bench": "bun run ./bench.ts",
     "build": "rm -rf dist && tsgo && bun run ./build.ts",
     "test": "bunx vitest"
   },
