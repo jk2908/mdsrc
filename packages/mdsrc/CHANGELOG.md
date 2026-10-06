@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1 - 2026-10-06
+
+- Watch rebuilds are much faster: parsed entries are cached and only recompiled when a file's `mtime` or size changes.
+- Collections are now read and parsed concurrently during a build.
+- Added a `bun run bench` benchmark for the parse cache and collection scheduling.
+
 ## 0.8.0 - 2026-10-06
 
 - Added an optional `ignorePattern` to collection config. Accepts a `RegExp` or a `(file: string) => boolean` predicate; matching files are skipped during generation.
