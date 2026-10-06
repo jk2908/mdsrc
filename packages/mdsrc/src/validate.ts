@@ -11,7 +11,7 @@ import { deep, isRecord } from './utils.js'
 /**
  * Check one entry against the declared schema and coerce what can be coerced
  * leave missing optional keys alone instead of treating them as errors
- * normalise dates to ISO strings for output
+ * normalise dates to ISO strings for output.
  */
 export function validate(input: Entries, schema: Schema) {
 	// keep valid values separate so bad fields never sneak into output
