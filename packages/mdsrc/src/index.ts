@@ -31,6 +31,7 @@ import {
 	pluralise,
 	singularise,
 	slugify,
+	source,
 } from './utils.js'
 import { parseKey, validate } from './validate.js'
 
@@ -274,7 +275,7 @@ export function schemaToType(schema: Schema) {
 
 			return `${key}${optional ? '?' : ''}: ${type}`
 		})
-		.join('\n  ')
+		.join('\n\t')
 
 	return `{ ${fields} }`
 }
@@ -414,56 +415,57 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 
 		// build the type file from the schema rather than the observed data
 		// that keeps optional fields and date output honest
+		const typeDeclarations = names
+			.map(
+				name => `export type ${capitalise(singularise(name))} = ${schemaToType(
+					collections[name].schema,
+				)} & {
+	html?: string
+	Component?: ${componentTypeDef ? 'Component' : 'unknown'}
+} & Collection.Metadata`,
+			)
+			.join('\n\n')
+
+		const typeSections = [AUTOGEN_MSG, `import type { Collection } from '${PKG_NAME}'`]
+
+		if (componentTypeDef) {
+			typeSections.push(
+				componentTypeDef.import,
+				`type Component = ${componentTypeDef.type}`,
+			)
+		}
+
+		typeSections.push(typeDeclarations)
+
 		promises.push(
-			maybeWrite(
-				path.join(outDir, 'types.ts'),
-				` ${AUTOGEN_MSG}
-
-					import type { Collection } from '${PKG_NAME}'
-					${componentTypeDef ? `\n\t\t\t\t\t${componentTypeDef.import}` : ''}
-
-					${componentTypeDef ? `\n\t\t\t\t\ttype Component = ${componentTypeDef.type}\n` : ''}
-				
-					${names
-						.map(
-							name => `
-								export type ${capitalise(singularise(name))} = ${schemaToType(collections[name].schema)} & {
-									html?: string,
-									Component?: ${componentTypeDef ? 'Component' : 'unknown'},
-								} & Collection.Metadata
-							`,
-						)
-						.join('\n\n')}`.trim(),
-			),
+			maybeWrite(path.join(outDir, 'types.ts'), `${typeSections.join('\n\n')}\n`),
 		)
 
 		// write the package surface separately so consumers get typed named exports
 		// this mirrors the generated js entry file
+		const namedExports = names
+			.map(
+				name =>
+					`export const all${capitalise(pluralise(name, 2))}: ${capitalise(
+						singularise(name),
+					)}[]`,
+			)
+			.join('\n')
+
 		promises.push(
 			maybeWrite(
 				path.join(outDir, 'index.d.ts'),
-				`	${AUTOGEN_MSG}
+				source`
+					${AUTOGEN_MSG}
 
 					import type { ${names.map(name => capitalise(singularise(name))).join(', ')} } from './types.js'
 
-					${names
-						.map(
-							name => `
-								export const all${capitalise(pluralise(name, 2))}: ${capitalise(singularise(name))}[]
-							`,
-						)
-						.join('\n\n')}
+					${namedExports}
 
 					declare module '${PKG_NAME}' {
-						${names
-							.map(
-								name => `
-									export const all${capitalise(pluralise(name, 2))}: ${capitalise(singularise(name))}[]
-								`,
-							)
-							.join('\n\n')}
+						${namedExports}
 					}
-				`.trim(),
+				`,
 			),
 		)
 
@@ -509,16 +511,17 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 			// add to manifest
 			manifest[name].push(fullPath)
 
-			promises.push(
-				maybeWrite(
-					fullPath,
-					`	${AUTOGEN_MSG}
-		
-						${imports.join('\n')}
+			const collectionSections = [AUTOGEN_MSG]
 
-						export const all${capitalise(pluralise(name, 2))} = [${entries.join(',\n')}]`.trim(),
-				),
+			if (imports.length > 0) collectionSections.push(imports.join('\n'))
+
+			collectionSections.push(
+				`export const all${capitalise(pluralise(name, 2))} = [\n${entries
+					.map(entry => `\t${entry}`)
+					.join(',\n')},\n]`,
 			)
+
+			promises.push(maybeWrite(fullPath, `${collectionSections.join('\n\n')}\n`))
 		}
 
 		// stitch the per-collection modules into the public js entrypoint
@@ -526,16 +529,11 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 		promises.push(
 			maybeWrite(
 				path.join(outDir, 'index.js'),
-				`${AUTOGEN_MSG}
-				
-					${names
-						.map(
-							name =>
-								`
-								export * from './${toModuleName(name)}.js'
-							`,
-						)
-						.join('\n')}`,
+				source`
+					${AUTOGEN_MSG}
+
+					${names.map(name => `export * from './${toModuleName(name)}.js'`).join('\n')}
+				`,
 			),
 		)
 
