@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.2 - 2026-10-13
+
+- Generated `.mdsrc` files (`types.ts`, `index.d.ts`, and the collection modules) are now cleanly indented. The codegen template's own leading whitespace and stray blank lines no longer leak into the emitted source.
+
 ## 0.8.1 - 2026-10-06
 
 - Watch rebuilds are much faster: parsed entries are cached and only recompiled when a file's `mtime` or size changes.
