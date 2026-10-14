@@ -581,12 +581,18 @@ describe('utils', () => {
 	})
 
 	it('converts a schema to stringified TypeScript', () => {
-		const res = schemaToType(SCHEMA)
-			.split('\n')
-			.map(n => n.replace(/\s/g, '').trim())
-			.join(';')
-
-		expect(res).toBe('{title:string;metadata?:{author:string};date:string;draft:boolean}')
+		expect(schemaToType(SCHEMA)).toBe(
+			[
+				'{',
+				'\ttitle: string',
+				'\tmetadata?: {',
+				'\t\tauthor: string',
+				'\t}',
+				'\tdate: string',
+				'\tdraft: boolean',
+				'}',
+			].join('\n'),
+		)
 	})
 
 	it('builds deep objects from dot separated strings', () => {

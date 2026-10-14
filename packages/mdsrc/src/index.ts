@@ -258,7 +258,9 @@ export async function maybeWrite(filePath: string, content: string) {
 	return true
 }
 
-export function schemaToType(schema: Schema) {
+export function schemaToType(schema: Schema, level = 1) {
+	const indent = '\t'.repeat(level)
+
 	const fields = Object.entries(schema)
 		.map(([k, v]) => {
 			const { key, optional } = parseKey(k)
@@ -267,17 +269,19 @@ export function schemaToType(schema: Schema) {
 
 			if (typeof v === 'string') {
 				// date will be an ISO string post validation
-				type = v === 'date' ? 'string' : v === 'array' ? 'any[]' : v
+				const base = v === 'date' ? 'string' : v === 'array' ? 'any[]' : v
+
+				type = base.replace(/\s*\|\s*/g, ' | ')
 			} else {
 				// recursively call for record shapes
-				type = schemaToType(v)
+				type = schemaToType(v, level + 1)
 			}
 
-			return `${key}${optional ? '?' : ''}: ${type}`
+			return `${indent}${key}${optional ? '?' : ''}: ${type}`
 		})
-		.join('\n\t')
+		.join('\n')
 
-	return `{ ${fields} }`
+	return `{\n${fields}\n${'\t'.repeat(level - 1)}}`
 }
 
 export async function getManifest(outDir: string) {
