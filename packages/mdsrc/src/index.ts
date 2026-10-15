@@ -519,10 +519,11 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 
 			if (imports.length > 0) collectionSections.push(imports.join('\n'))
 
+			const lines = entries.map(entry => `\t${entry}`)
+			const body = lines.length > 0 ? `[\n${lines.join(',\n')},\n]` : '[]'
+
 			collectionSections.push(
-				`export const all${capitalise(pluralise(name, 2))} = [\n${entries
-					.map(entry => `\t${entry}`)
-					.join(',\n')},\n]`,
+				`export const all${capitalise(pluralise(name, 2))} = ${body}`,
 			)
 
 			promises.push(maybeWrite(fullPath, `${collectionSections.join('\n\n')}\n`))

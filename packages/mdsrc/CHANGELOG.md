@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- An empty collection now generates `export const all<Thing> = []`. It used to emit a sparse array (a stray trailing comma, `[\n,\n]`), which behaved as a one-element array holding `undefined` and broke consumers that mapped over it.
+
 ## 0.8.3 - 2026-10-14
 
 - Schema types are emitted across multiple lines: the opening brace sits on its own line, fields are indented, and nested object schemas indent a level deeper.
