@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.4 - 2026-10-15
 
 - An empty collection now generates `export const all<Thing> = []`. It used to emit a sparse array (a stray trailing comma, `[\n,\n]`), which behaved as a one-element array holding `undefined` and broke consumers that mapped over it.
 
