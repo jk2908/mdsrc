@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0 - 2026-11-25
+
+- Breaking: a bare `array` field is now typed from the elements that are actually validated (for example `string[]`) instead of `any[]`, and falls back to `unknown[]` when nothing is observed. Declare `array<T>` to state the element type explicitly.
+- Added array element types: `array<string>`, `array<number>`, `array<boolean>`, `array<date>`, unions such as `array<string|number>`, and nested arrays such as `array<array<number>>`. Elements are validated and coerced, and generate `string[]`, `(string | number)[]`, `number[][]`, and so on. Modifiers still apply to the array's length.
+- Bare arrays infer their element type from the validated entries, unioning mixed values and keeping object elements as `Record<string, unknown>`.
+- Fixed generated schema types for collections that use `min`/`max` modifiers. Modifiers were emitted as TypeScript, so `.mdsrc/types.ts` failed to parse: `string|min=3` became `string | min=3` and `array|min=2` became `array | min=2`.
+- Schema type generation now reuses the validation parser, so an unrecognised schema type raises the same error at generation time instead of emitting invalid TypeScript.
+
 ## 0.8.4 - 2026-10-15
 
 - An empty collection now generates `export const all<Thing> = []`. It used to emit a sparse array (a stray trailing comma, `[\n,\n]`), which behaved as a one-element array holding `undefined` and broke consumers that mapped over it.
