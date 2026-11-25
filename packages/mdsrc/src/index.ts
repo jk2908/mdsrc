@@ -33,7 +33,7 @@ import {
 	slugify,
 	source,
 } from './utils.js'
-import { parseKey, validate } from './validate.js'
+import { parseKey, parseSchemaValue, validate } from './validate.js'
 
 export const DEFAULT_COMPILE_OPTIONS = {
 	features: {
@@ -258,24 +258,43 @@ export async function maybeWrite(filePath: string, content: string) {
 	return true
 }
 
-export function schemaToType(schema: Schema, level = 1) {
+/**
+ * Map a primitive schema value to the TypeScript type validation produces.
+ *
+ * Modifiers only constrain values at runtime, so they are dropped here.
+ * Dates are normalised to ISO strings and arrays are untyped in the schema.
+ */
+function schemaValueToType(value: Schema.Value): string {
+	const { types } = parseSchemaValue(value)
+	const mapped = new Set<string>()
+
+	for (const type of types) {
+		switch (type) {
+			case 'date':
+				mapped.add('string')
+				break
+			case 'array':
+				mapped.add('any[]')
+				break
+			default:
+				mapped.add(type)
+		}
+	}
+
+	// a schema with no types cannot describe a value
+	if (!mapped.size) return 'unknown'
+
+	return [...mapped].join(' | ')
+}
+
+export function schemaToType(schema: Schema, level = 1): string {
 	const indent = '\t'.repeat(level)
 
 	const fields = Object.entries(schema)
 		.map(([k, v]) => {
 			const { key, optional } = parseKey(k)
-
-			let type: string
-
-			if (typeof v === 'string') {
-				// date will be an ISO string post validation
-				const base = v === 'date' ? 'string' : v === 'array' ? 'any[]' : v
-
-				type = base.replace(/\s*\|\s*/g, ' | ')
-			} else {
-				// recursively call for record shapes
-				type = schemaToType(v, level + 1)
-			}
+			const type =
+				typeof v === 'string' ? schemaValueToType(v) : schemaToType(v, level + 1)
 
 			return `${indent}${key}${optional ? '?' : ''}: ${type}`
 		})

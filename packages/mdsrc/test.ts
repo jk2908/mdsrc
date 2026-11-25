@@ -595,6 +595,36 @@ describe('utils', () => {
 		)
 	})
 
+	it('drops min and max modifiers from the generated type', () => {
+		expect(schemaToType({ title: 'string|min=3|max=6', age: 'number|min=18' })).toBe(
+			['{', '\ttitle: string', '\tage: number', '}'].join('\n'),
+		)
+	})
+
+	it('maps a modified array to any[]', () => {
+		expect(schemaToType({ tags: 'array|min=2', 'links?': 'array|max=3' })).toBe(
+			['{', '\ttags: any[]', '\tlinks?: any[]', '}'].join('\n'),
+		)
+	})
+
+	it('maps a modified date to an ISO string', () => {
+		expect(schemaToType({ published: 'date|min=1735689600000' })).toBe(
+			['{', '\tpublished: string', '}'].join('\n'),
+		)
+	})
+
+	it('keeps unions and dedupes primitives that share a TypeScript type', () => {
+		expect(schemaToType({ val: 'string|number', when: 'date|string' })).toBe(
+			['{', '\tval: string | number', '\twhen: string', '}'].join('\n'),
+		)
+	})
+
+	it('applies modifiers inside nested objects', () => {
+		expect(schemaToType({ meta: { title: 'string|min=3', tags: 'array|min=2' } })).toBe(
+			['{', '\tmeta: {', '\t\ttitle: string', '\t\ttags: any[]', '\t}', '}'].join('\n'),
+		)
+	})
+
 	it('builds deep objects from dot separated strings', () => {
 		const ob = {}
 		deep(ob, 'some.thing.else', 'mdsrc')

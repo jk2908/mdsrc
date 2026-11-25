@@ -418,11 +418,11 @@ export function parseKey(k: string) {
 	}
 }
 
-function parseSchemaValue(value: Schema.Value) {
+export function parseSchemaValue(value: Schema.Value) {
 	if (isRecord(value)) throw new Error('Cannot parse object schema values')
 
 	const parts = value.split('|')
-	const types: string[] = []
+	const types: Schema.Primitive[] = []
 	const modifiers: Partial<Record<Schema.ModifierName, string>> = {}
 
 	for (const p of parts) {
