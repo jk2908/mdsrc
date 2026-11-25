@@ -26,7 +26,7 @@ export default defineConfig({
 					schema: {
 						name: 'string',
 						date: 'string|number',
-						'members?': 'array',
+						'members?': 'array<string>',
 					},
 				},
 			],

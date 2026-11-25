@@ -23,6 +23,7 @@ import type {
 	Schema,
 } from './types.js'
 import { AUTOGEN_MSG, GENERATED_DIR, PKG_NAME } from './config.js'
+import { inferArrayTypes, wrapArray } from './infer.js'
 import { Logger } from './logger.js'
 import {
 	capitalise,
@@ -259,27 +260,33 @@ export async function maybeWrite(filePath: string, content: string) {
 }
 
 /**
+ * Map a parsed type expression to the TypeScript type validation produces.
+ *
+ * Dates are normalised to ISO strings, bare arrays have no element schema and
+ * generate `unknown[]`, and generic arrays generate their element union.
+ */
+function specToType(spec: Schema.Spec, inferred?: string): string {
+	if (spec.type === 'date') return 'string'
+
+	if (spec.type === 'array') {
+		if (!spec.element.length) return inferred ? wrapArray(inferred) : 'unknown[]'
+
+		const element = [...new Set(spec.element.map(inner => specToType(inner)))]
+
+		return wrapArray(element.join(' | '))
+	}
+
+	return spec.type
+}
+
+/**
  * Map a primitive schema value to the TypeScript type validation produces.
  *
  * Modifiers only constrain values at runtime, so they are dropped here.
- * Dates are normalised to ISO strings and arrays are untyped in the schema.
  */
-function schemaValueToType(value: Schema.Value): string {
+function schemaValueToType(value: Schema.Value, inferred?: string): string {
 	const { types } = parseSchemaValue(value)
-	const mapped = new Set<string>()
-
-	for (const type of types) {
-		switch (type) {
-			case 'date':
-				mapped.add('string')
-				break
-			case 'array':
-				mapped.add('any[]')
-				break
-			default:
-				mapped.add(type)
-		}
-	}
+	const mapped = new Set(types.map(spec => specToType(spec, inferred)))
 
 	// a schema with no types cannot describe a value
 	if (!mapped.size) return 'unknown'
@@ -287,14 +294,22 @@ function schemaValueToType(value: Schema.Value): string {
 	return [...mapped].join(' | ')
 }
 
-export function schemaToType(schema: Schema, level = 1): string {
+export function schemaToType(
+	schema: Schema,
+	level = 1,
+	inferred: Map<string, string> = new Map(),
+	prefix = '',
+): string {
 	const indent = '\t'.repeat(level)
 
 	const fields = Object.entries(schema)
 		.map(([k, v]) => {
 			const { key, optional } = parseKey(k)
+			const fieldPath = prefix ? `${prefix}.${key}` : key
 			const type =
-				typeof v === 'string' ? schemaValueToType(v) : schemaToType(v, level + 1)
+				typeof v === 'string'
+					? schemaValueToType(v, inferred.get(fieldPath))
+					: schemaToType(v, level + 1, inferred, fieldPath)
 
 			return `${indent}${key}${optional ? '?' : ''}: ${type}`
 		})
@@ -437,16 +452,23 @@ async function build(src: Collection.Entry[], buildContext: BuildContext) {
 		const promises = []
 
 		// build the type file from the schema rather than the observed data
-		// that keeps optional fields and date output honest
+		// that keeps optional fields and date output honest. bare arrays are the
+		// exception: their element type has no schema to read, so infer it from
+		// the entries that were actually validated
 		const typeDeclarations = names
-			.map(
-				name => `export type ${capitalise(singularise(name))} = ${schemaToType(
-					collections[name].schema,
+			.map(name => {
+				const { schema, items } = collections[name]
+				const inferred = inferArrayTypes(schema, items)
+
+				return `export type ${capitalise(singularise(name))} = ${schemaToType(
+					schema,
+					1,
+					inferred,
 				)} & {
 	html?: string
 	Component?: ${componentTypeDef ? 'Component' : 'unknown'}
-} & Collection.Metadata`,
-			)
+} & Collection.Metadata`
+			})
 			.join('\n\n')
 
 		const typeSections = [AUTOGEN_MSG, `import type { Collection } from '${PKG_NAME}'`]

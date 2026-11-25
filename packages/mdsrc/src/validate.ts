@@ -1,6 +1,6 @@
 import {
 	MODIFIER_NAMES,
-	PRIMITIVE_NAMES,
+	SCALAR_NAMES,
 	type Entries,
 	type Issue,
 	type Result,
@@ -55,7 +55,9 @@ export function validate(input: Entries, schema: Schema) {
 		if (typeof schemaValue === 'string') {
 			const { types, modifiers } = parseSchemaValue(schemaValue)
 
-			for (const type of types) {
+			for (const spec of types) {
+				const type = spec.type
+
 				if (type === 'string') {
 					if (typeof data !== 'string') {
 						if (types.length === 1) {
@@ -373,6 +375,22 @@ export function validate(input: Entries, schema: Schema) {
 						}
 					}
 
+					if (spec.element.length) {
+						const checked = checkSpec(spec, data, parsedKey)
+
+						if (!checked.ok) {
+							if (types.length === 1) {
+								issues.push(checked.issue)
+								return
+							}
+
+							continue
+						}
+
+						deep(validated, parsedKey, checked.value)
+						return
+					}
+
 					deep(validated, parsedKey, data)
 					return
 				}
@@ -380,7 +398,7 @@ export function validate(input: Entries, schema: Schema) {
 
 			// no type matched
 			issues.push({
-				message: `Key ${parsedKey} must be one of: ${types.join(', ')}`,
+				message: `Key ${parsedKey} must be one of: ${types.map(formatSpec).join(', ')}`,
 				code: 'INVALID_TYPE',
 			})
 		} else {
@@ -418,33 +436,206 @@ export function parseKey(k: string) {
 	}
 }
 
-export function parseSchemaValue(value: Schema.Value) {
+/**
+ * Find a character outside any `<...>` generic, so a modifier's `=` inside an
+ * element type is not mistaken for a top-level modifier.
+ */
+function indexOfTopLevel(value: string, target: string) {
+	let depth = 0
+
+	for (let i = 0; i < value.length; i++) {
+		const char = value[i]
+
+		if (char === '<') depth++
+		else if (char === '>') depth--
+		else if (char === target && depth === 0) return i
+	}
+
+	return -1
+}
+
+/**
+ * Split a schema value on `|`, ignoring separators inside `<>` so an element
+ * union such as `array<string|number>` stays one segment.
+ */
+function splitTopLevel(value: string) {
+	const parts: string[] = []
+	let depth = 0
+	let start = 0
+
+	for (let i = 0; i < value.length; i++) {
+		const char = value[i]
+
+		if (char === '<') depth++
+		else if (char === '>') depth--
+		else if (char === '|' && depth === 0) {
+			parts.push(value.slice(start, i))
+			start = i + 1
+		}
+	}
+
+	parts.push(value.slice(start))
+
+	return parts
+}
+
+/**
+ * Parse one type expression, including generic array element types.
+ *
+ * `array` keeps its elements untyped. `array<T>` accepts a union of scalars or
+ * nested arrays, for example `array<string>`, `array<string|number>`, and
+ * `array<array<date>>`.
+ */
+function parseSpec(value: string): Schema.Spec {
+	const generic = /^array<(.+)>$/.exec(value)
+
+	if (generic) {
+		const parts = splitTopLevel(generic[1]!)
+
+		if (parts.some(part => part.includes('='))) {
+			throw new Error('Array element types cannot take modifiers')
+		}
+
+		return { type: 'array', element: parts.map(parseSpec) }
+	}
+
+	if (value === 'array') return { type: 'array', element: [] }
+	if (!isScalar(value)) throw new Error(`Unrecognised type: ${value}`)
+
+	return { type: value }
+}
+
+export function parseSchemaValue(value: string | Schema.Value): Schema.Parsed {
 	if (isRecord(value)) throw new Error('Cannot parse object schema values')
 
-	const parts = value.split('|')
-	const types: Schema.Primitive[] = []
+	const types: Schema.Spec[] = []
 	const modifiers: Partial<Record<Schema.ModifierName, string>> = {}
 
-	for (const p of parts) {
-		if (p.indexOf('=') > -1) {
-			const [m, v] = p.split('=')
+	for (const part of splitTopLevel(value)) {
+		const separator = indexOfTopLevel(part, '=')
 
-			if (!isModifierName(m)) throw new Error(`Unrecognised modifier: ${m}`)
+		if (separator > -1) {
+			const name = part.slice(0, separator)
 
-			modifiers[m] = v
+			if (!isModifierName(name)) throw new Error(`Unrecognised modifier: ${name}`)
+
+			modifiers[name] = part.slice(separator + 1)
 		} else {
-			if (!isPrimitive(p)) throw new Error(`Unrecognised type: ${p}`)
-			types.push(p)
+			types.push(parseSpec(part))
 		}
 	}
 
 	return { types, modifiers }
 }
 
+/**
+ * Render a parsed type the way it was authored, for diagnostics.
+ */
+function formatSpec(spec: Schema.Spec): string {
+	if (spec.type !== 'array') return spec.type
+
+	// a bare array has no element type
+	const element = spec.element.map(formatSpec).join('|')
+
+	return `array<${element || 'unknown'}>`
+}
+
+type Checked = { ok: true; value: unknown } | { ok: false; issue: Issue }
+
+function fail(message: string, code: Issue['code'] = 'INVALID_TYPE'): Checked {
+	return { ok: false, issue: { message, code } }
+}
+
+/**
+ * Check a value against a union of element specs, coercing primitives the same
+ * way field validation does.
+ */
+function checkElement(specs: Schema.Spec[], value: unknown, where: string): Checked {
+	let first: Issue | undefined
+
+	for (const spec of specs) {
+		const checked = checkSpec(spec, value, where)
+
+		if (checked.ok) return checked
+
+		first ??= checked.issue
+	}
+
+	// a single spec keeps its more specific issue, such as a nested element path
+	if (specs.length === 1 && first) return { ok: false, issue: first }
+
+	return fail(`Key ${where} must be one of: ${specs.map(formatSpec).join(', ')}`)
+}
+
+/**
+ * Check one value against one spec. Nested arrays recurse through their element
+ * union so `array<array<date>>` produces ISO strings at every depth.
+ */
+function checkSpec(spec: Schema.Spec, value: unknown, where: string): Checked {
+	switch (spec.type) {
+		case 'string':
+			return typeof value === 'string'
+				? { ok: true, value }
+				: fail(`Key ${where} must be a string`)
+
+		case 'number': {
+			const num =
+				typeof value === 'string' && !Number.isNaN(Number(value)) ? Number(value) : value
+
+			return typeof num === 'number' && !Number.isNaN(num)
+				? { ok: true, value: num }
+				: fail(`Key ${where} must be a number`)
+		}
+
+		case 'boolean': {
+			if (typeof value === 'boolean') return { ok: true, value }
+
+			if (typeof value === 'string') {
+				if (value.toLowerCase() === 'true') return { ok: true, value: true }
+				if (value.toLowerCase() === 'false') return { ok: true, value: false }
+			}
+
+			return fail(`Key ${where} must be a boolean`)
+		}
+
+		case 'date': {
+			let date: Date
+
+			if (value instanceof Date) date = value
+			else if (typeof value === 'string' || typeof value === 'number')
+				date = new Date(value)
+			else return fail(`Key ${where} must be a Date, string or number`)
+
+			return Number.isNaN(date.getTime())
+				? fail(`Key ${where} must be a valid date`, 'INVALID_DATE')
+				: { ok: true, value: date.toISOString() }
+		}
+
+		case 'array': {
+			if (!Array.isArray(value)) return fail(`Key ${where} must be an array`)
+
+			// a bare array promises nothing about its elements
+			if (!spec.element.length) return { ok: true, value }
+
+			const coerced: unknown[] = []
+
+			for (let i = 0; i < value.length; i++) {
+				const checked = checkElement(spec.element, value[i], `${where}.${i}`)
+
+				if (!checked.ok) return checked
+
+				coerced.push(checked.value)
+			}
+
+			return { ok: true, value: coerced }
+		}
+	}
+}
+
 function isModifierName(name: string): name is Schema.ModifierName {
 	return MODIFIER_NAMES.some(n => n === name)
 }
 
-function isPrimitive(name: string): name is Schema.Primitive {
-	return PRIMITIVE_NAMES.some(n => n === name)
+function isScalar(name: string): name is Schema.Scalar {
+	return SCALAR_NAMES.some(n => n === name)
 }

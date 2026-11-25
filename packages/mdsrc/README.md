@@ -36,7 +36,7 @@ The plugin reads markdown and MDX content, validates frontmatter against your sc
 
 ### Schema
 
-Fields are declared as `fieldName: 'type'`. Supported types: `string`, `number`, `boolean`, `date`, `array`.
+Fields are declared as `fieldName: 'type'`. Supported types: `string`, `number`, `boolean`, `date`, and `array`. Arrays can declare their element type with `array<T>`.
 
 Optional fields use a `?` suffix: `'metadata?': { author: 'string' }`.
 
@@ -70,6 +70,24 @@ schema: {
 	tags: 'array|min=2',
 }
 ```
+
+### Arrays
+
+Declare the element type with `array<...>`:
+
+```ts
+schema: {
+	tags: 'array<string>', // string[]
+	dates: 'array<date>', // string[] (ISO strings)
+	scores: 'array<number>', // number[]
+	grid: 'array<array<number>>', // number[][]
+	mixed: 'array<string|number>', // (string | number)[]
+}
+```
+
+Elements are validated and coerced the same way as fields, so numeric strings in `array<number>` become numbers and `array<date>` produces ISO strings. Element types can be unions or nested arrays.
+
+A bare `array` infers its element type from the entries that are validated at build time, so a list of strings becomes `string[]` and mixed values become a union. If no elements are observed, it generates `unknown[]`. Modifiers apply to the array's length, for example `array<string>|min=2`; they are not allowed on element types.
 
 Nested objects are declared inline:
 

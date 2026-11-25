@@ -22,6 +22,7 @@ import {
 	toModuleName,
 } from './src/index.js'
 import { Logger } from './src/logger.js'
+import { inferArrayTypes } from './src/infer.js'
 import { dedent, deep } from './src/utils.js'
 import { parseKey, validate } from './src/validate.js'
 
@@ -561,6 +562,63 @@ describe('validate', () => {
 		expect(issues).toBeUndefined()
 		expect(value?.tags).toEqual(['a', 'b'])
 	})
+
+	it('validates generic array elements', () => {
+		const { value, issues } = validate({ tags: ['a', 'b'] }, { tags: 'array<string>' })
+
+		expect(issues).toBeUndefined()
+		expect(value?.tags).toEqual(['a', 'b'])
+	})
+
+	it('rejects generic array elements of the wrong type', () => {
+		const { issues } = validate({ tags: ['a', 2] }, { tags: 'array<string>' })
+
+		expect(issues?.[0].code).toBe('INVALID_TYPE')
+		expect(issues?.[0].message).toContain('tags.1')
+	})
+
+	it('coerces generic array elements', () => {
+		const { value, issues } = validate(
+			{ nums: ['1', 2], flags: ['true', false], dates: ['2020-01-01'] },
+			{
+				nums: 'array<number>',
+				flags: 'array<boolean>',
+				dates: 'array<date>',
+			},
+		)
+
+		expect(issues).toBeUndefined()
+		expect(value?.nums).toEqual([1, 2])
+		expect(value?.flags).toEqual([true, false])
+		expect(value?.dates).toEqual([new Date('2020-01-01').toISOString()])
+	})
+
+	it('validates nested generic array elements', () => {
+		const { issues } = validate({ grid: [['a'], [1]] }, { grid: 'array<array<string>>' })
+
+		expect(issues?.[0].code).toBe('INVALID_TYPE')
+		expect(issues?.[0].message).toContain('grid.1.0')
+	})
+
+	it('accepts unions inside generic array elements', () => {
+		const { value, issues } = validate({ val: ['a', 2] }, { val: 'array<string|number>' })
+
+		expect(issues).toBeUndefined()
+		expect(value?.val).toEqual(['a', 2])
+	})
+
+	it('applies modifiers to the array, not its elements', () => {
+		const { value, issues } = validate({ tags: ['a'] }, { tags: 'array<string>|min=1' })
+
+		expect(issues).toBeUndefined()
+		expect(value?.tags).toEqual(['a'])
+	})
+
+	it('rejects modifiers on array elements', () => {
+		expect(() => validate({ tags: ['a'] }, { tags: 'array<string|min=2>' })).toThrow(
+			'Array element types cannot take modifiers',
+		)
+	})
 })
 
 describe('utils', () => {
@@ -601,9 +659,33 @@ describe('utils', () => {
 		)
 	})
 
-	it('maps a modified array to any[]', () => {
-		expect(schemaToType({ tags: 'array|min=2', 'links?': 'array|max=3' })).toBe(
-			['{', '\ttags: any[]', '\tlinks?: any[]', '}'].join('\n'),
+	it('maps a bare array to unknown[]', () => {
+		expect(schemaToType({ tags: 'array', 'links?': 'array|min=1' })).toBe(
+			['{', '\ttags: unknown[]', '\tlinks?: unknown[]', '}'].join('\n'),
+		)
+	})
+
+	it('generates element types for generic arrays', () => {
+		expect(
+			schemaToType({
+				tags: 'array<string>',
+				nums: 'array<number>',
+				dates: 'array<date>',
+				mixed: 'array<string|number>',
+				grid: 'array<array<number>>',
+				'members?': 'array<string>|min=1',
+			}),
+		).toBe(
+			[
+				'{',
+				'\ttags: string[]',
+				'\tnums: number[]',
+				'\tdates: string[]',
+				'\tmixed: (string | number)[]',
+				'\tgrid: number[][]',
+				'\tmembers?: string[]',
+				'}',
+			].join('\n'),
 		)
 	})
 
@@ -621,7 +703,9 @@ describe('utils', () => {
 
 	it('applies modifiers inside nested objects', () => {
 		expect(schemaToType({ meta: { title: 'string|min=3', tags: 'array|min=2' } })).toBe(
-			['{', '\tmeta: {', '\t\ttitle: string', '\t\ttags: any[]', '\t}', '}'].join('\n'),
+			['{', '\tmeta: {', '\t\ttitle: string', '\t\ttags: unknown[]', '\t}', '}'].join(
+				'\n',
+			),
 		)
 	})
 
@@ -642,6 +726,71 @@ describe('utils', () => {
 		expect(toModuleName('Posts')).toBe('posts')
 		expect(toModuleName('BlogPosts')).toBe('blogposts')
 		expect(toModuleName('already-lowercase')).toBe('already-lowercase')
+	})
+})
+
+describe('array inference', () => {
+	it('infers bare array elements from entries', () => {
+		const inferred = inferArrayTypes(
+			{ tags: 'array', 'meta?': { links: 'array' } },
+			[
+				{ tags: ['a', 'b'], meta: { links: ['x'] } },
+				{ tags: ['c'] },
+			],
+		)
+
+		expect(inferred.get('tags')).toBe('string')
+		expect(inferred.get('meta.links')).toBe('string')
+	})
+
+	it('unions mixed element types', () => {
+		const inferred = inferArrayTypes({ vals: 'array' }, [{ vals: [1, 'a'] }])
+
+		expect(inferred.get('vals')).toBe('number | string')
+	})
+
+	it('keeps object elements conservative and infers nested arrays', () => {
+		const inferred = inferArrayTypes(
+			{ items: 'array', grid: 'array' },
+			[
+				{
+					items: [{ id: 1 }],
+					grid: [
+						[1, 2],
+						[3],
+					],
+				},
+			],
+		)
+
+		expect(inferred.get('items')).toBe('Record<string, unknown>')
+		expect(inferred.get('grid')).toBe('number[]')
+	})
+
+	it('leaves explicit element types alone', () => {
+		const inferred = inferArrayTypes({ tags: 'array<string>' }, [{ tags: ['a'] }])
+
+		expect(inferred.size).toBe(0)
+	})
+
+	it('leaves paths with no observed arrays out of the map', () => {
+		const inferred = inferArrayTypes({ tags: 'array' }, [{ tags: 'not an array' }])
+
+		expect(inferred.size).toBe(0)
+	})
+
+	it('uses inferred element types in generated types', () => {
+		const inferred = new Map([['tags', 'number | string']])
+
+		expect(schemaToType({ tags: 'array' }, 1, inferred)).toBe(
+			['{', '\ttags: (number | string)[]', '}'].join('\n'),
+		)
+	})
+
+	it('falls back to unknown[] when nothing was observed', () => {
+		expect(schemaToType({ tags: 'array' }, 1, new Map())).toBe(
+			['{', '\ttags: unknown[]', '}'].join('\n'),
+		)
 	})
 })
 

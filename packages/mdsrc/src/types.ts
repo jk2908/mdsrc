@@ -24,12 +24,26 @@ export type BuildContext = {
 
 export type Manifest = Record<string, string[]>
 
-export const PRIMITIVE_NAMES = ['string', 'number', 'boolean', 'date', 'array'] as const
+export const SCALAR_NAMES = ['string', 'number', 'boolean', 'date'] as const
+
+export const PRIMITIVE_NAMES = [...SCALAR_NAMES, 'array'] as const
 
 export const MODIFIER_NAMES = ['max', 'min'] as const
 
 export namespace Schema {
-	export type Primitive = 'string' | 'number' | 'boolean' | 'date' | 'array'
+	export type Primitive = (typeof PRIMITIVE_NAMES)[number]
+
+	/** A primitive an array element can hold. */
+	export type Scalar = (typeof SCALAR_NAMES)[number]
+
+	/** A parsed type expression: a scalar, or an array of one or more of these. */
+	export type Spec = { type: Scalar } | { type: 'array'; element: Spec[] }
+
+	/** A parsed schema value: the types it accepts and its value modifiers. */
+	export type Parsed = {
+		types: Spec[]
+		modifiers: Partial<Record<ModifierName, string>>
+	}
 
 	export type ModifierName = (typeof MODIFIER_NAMES)[number]
 
@@ -37,7 +51,15 @@ export namespace Schema {
 
 	export type Key = string
 
-	export type Value = Primitive | `${Primitive}|${string}` | { [key: Key]: Value }
+	/** `array<string>`, `array<string|number>`, `array<array<number>>` */
+	export type ArrayOf = `array<${string}>`
+
+	export type Value =
+		| Primitive
+		| ArrayOf
+		| `${Primitive}|${string}`
+		| `${ArrayOf}|${string}`
+		| { [key: Key]: Value }
 }
 
 export interface Schema {
